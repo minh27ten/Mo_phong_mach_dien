@@ -1,0 +1,33 @@
+{
+  "name": "mach-dien-lab",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "build:portable": "vite build --config vite.portable.config.ts",
+    "build:desktop": "npm run build:portable && node -e \"require('child_process').execFileSync('cargo',['build','--release'],{cwd:'desktop',stdio:'inherit'})\"",
+    "preview": "vite preview",
+    "clean": "node -e \"['dist','dist-portable'].forEach(d=>require('fs').rmSync(d,{recursive:true,force:true}))\"",
+    "lint": "tsc --noEmit",
+    "test": "node --import tsx --test src/engine/mna.test.ts src/engine/__tests__/solver.test.ts src/engine/__tests__/stress.test.ts"
+  },
+  "dependencies": {
+    "lucide-react": "^0.546.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vite-plugin-singlefile": "^2.3.4"
+  }
+}

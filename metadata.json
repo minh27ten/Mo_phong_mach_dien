@@ -1,0 +1,5 @@
+{
+  "name": "MạchĐiệnLab — Trình Mô Phỏng Mạch Điện & Hệ Thống Điện",
+  "description": "Phần mềm mô phỏng mạch điện DC, AC xác lập, quá độ và lưới điện 3 pha chạy hoàn toàn trên trình duyệt bằng phương pháp MNA.",
+  "requestFramePermissions": []
+}
