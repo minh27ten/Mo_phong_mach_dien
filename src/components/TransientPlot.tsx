@@ -24,7 +24,15 @@ export const TransientPlot: React.FC<TransientPlotProps> = ({ transient, element
         list.push({ key: `curr:${el.id}`, label: `i(${el.name}) [A]`, kind: 'I', values: iVals });
       }
       const vVals = transient.elementVoltages[el.id];
-      if (vVals && (el.type === 'CAPACITOR' || el.type === 'INDUCTOR' || el.type === 'RESISTOR')) {
+      if (
+        vVals &&
+        (el.type === 'V_SRC' ||
+          el.type === 'I_SRC' ||
+          el.type === 'ONE_PORT' ||
+          el.type === 'CAPACITOR' ||
+          el.type === 'INDUCTOR' ||
+          el.type === 'RESISTOR')
+      ) {
         list.push({ key: `volt:${el.id}`, label: `u(${el.name}) [V]`, kind: 'V', values: vVals });
       }
     }
@@ -178,7 +186,7 @@ export const TransientPlot: React.FC<TransientPlotProps> = ({ transient, element
 
           {/* Các đường cong đồ thị */}
           {activeTraces.map((tr, tIdx) => {
-            const step = Math.max(1, Math.floor(times.length / 400));
+            const step = Math.max(1, Math.floor(times.length / 800));
             const pts: string[] = [];
             for (let i = 0; i < times.length; i += step) {
               pts.push(`${mapX(times[i]).toFixed(1)},${mapY(tr.values[i]).toFixed(1)}`);

@@ -22,14 +22,14 @@ Tài liệu hướng dẫn chi tiết cách vẽ sơ đồ, thiết lập thông
 
 Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
-- **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
+- **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
 - **Thư viện linh kiện (Cột trái):** Chứa 16 phần tử chuyên ngành điện + ký hiệu Đất (`GND`), có ô tìm kiếm nhanh theo tên hoặc ký hiệu (`R`, `C`, `op-amp`, `3 pha`, ...). Nhấp nút thu gọn ở góc trên bên trái thanh công cụ nếu muốn mở rộng không gian vẽ.
 - **Bản vẽ sơ đồ (Giữa):** Lưới tọa độ `20 px` giúp căn thẳng hàng linh kiện và dây dẫn, kèm công tắc **Hiển thị số đo** (hiển thị điện áp nút `N...` và dòng nhánh `I=...` trực tiếp trên mạch) và cụm thu phóng (`+`, `−`, *Khớp khung nhìn*).
 - **Bảng Thông số & Kết quả (Cột phải):** Gồm 4 thẻ:
   - **Thông số:** Chỉnh sửa thuộc tính của phần tử hoặc dây đang chọn.
-  - **Kết quả:** Xem *Cân bằng công suất* (`P`, `Q`), bảng *Điện thế các nút* và bảng *Dòng điện & Công suất phần tử*.
-  - **Đồ thị:** Biểu đồ dao động ký đa kênh theo thời gian `u(t)`, `i(t)` ở chế độ *Quá độ*.
-  - **Tương đương:** Công cụ trích xuất *Thévenin / Norton* và *Mạng 2 cửa `[Z]`, `[Y]`, `[A]`*.
+  - **Kết quả:** Xem thẻ *Xếp chồng đa tần số* (khi mạch có nhiều tần số / sóng hài), *Cân bằng công suất* (`P`, `Q`), bảng *Điện thế các nút*, bảng *Dòng điện & Công suất phần tử*, và nhấp chọn từng dòng để xem thẻ **Phổ hài & Tức thời**.
+  - **Đồ thị:** Biểu đồ dao động ký đa kênh theo thời gian `u(t)`, `i(t)` ở chế độ *Quá độ* (bao gồm cả dạng sóng điện áp nguồn `u(E...)`).
+  - **Tương đương:** Công cụ trích xuất *Thévenin / Norton* và *Mạng 2 cửa `[Z]`, `[Y]`, `[A]`* kèm nút chọn nhanh theo các tần số đang có trong mạch.
 
 ---
 
@@ -77,8 +77,10 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 - **Nguồn áp độc lập (`V_SRC`) & Nguồn dòng độc lập (`I_SRC`):**
   - **DC:** Nguồn một chiều cố định.
   - **AC Sin:** Nhập biên độ theo **RMS** (hiệu dụng) hoặc **Đỉnh** (Peak $U_m = \sqrt{2} U$), tần số (Hz) và góc pha đầu (độ). Quy ước tức thời: $u(t) = U_m \cos(2\pi f t + \varphi)$.
+  - **Hỗn hợp (`MIXED`):** Kết hợp ngay trên **cùng một nguồn** giá trị **Thành phần DC** và bảng **Các sóng hài / tần số** (Tần số `Hz`, Biên độ theo kiểu **RMS** hoặc **Đỉnh**, và Pha đầu `°`). Khung xem trước hiển thị trực tiếp tổng trị hiệu dụng True RMS và biểu thức tức thời $u(t)$ / $i(t)$.
   - **Step:** Bậc nhảy từ giá trị *Trước đóng* sang *Sau đóng* tại thời điểm $t_{\text{step}}$ (hữu ích cho phân tích quá độ đóng/cắt).
   - *Chiều nguồn dòng:* Mũi tên hướng từ chân `−` (`n`) sang chân `+` (`p`) bên trong nguồn.
+  - *Xuất / Nhập JSON:* Tệp `.json` lưu và kiểm tra hợp lệ cả dạng sóng `MIXED` (`mixedDcValue` và mảng `harmonics`).
 
 ### Phần tử thụ động & Hỗ cảm
 - **Điện trở (`RESISTOR`):** Giá trị `R` ($\Omega$, tối thiểu $10^{-6}\ \Omega$).
@@ -115,9 +117,10 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 4. **Quá độ (Transient):** Tích phân miền thời gian bằng phương pháp **Backward Euler** với bước thời gian $\Delta t$ và thời gian mô phỏng $T_{\text{end}}$.
 
 ### Cách đọc Bảng kết quả
+- **Mạch nguồn hỗn hợp (Xếp chồng đa tần số):** Khi mạch có nhiều nguồn khác tần số hoặc dùng nguồn **Hỗn hợp**, ở chế độ **AC Phasor** bộ giải tự động phân tích độc lập từng tần số ($0\ \text{Hz}$ và các $f_k > 0$), hiển thị thẻ **Xếp chồng đa tần số**, tính trị hiệu dụng tổng (True RMS) và công suất tác dụng tổng. Nhấp vào một dòng bất kỳ trong bảng *Điện thế các nút* hoặc *Dòng điện & Công suất phần tử* để mở thẻ **Phổ hài & Tức thời** (xem từng thành phần tần số $f_k$ và biểu thức tức thời đầy đủ). Ở chế độ **DC**, chỉ thành phần $0\ \text{Hz}$ được giải.
 - **Cân bằng công suất:** Thẻ màu xanh **Khớp lý thuyết** xuất hiện khi tổng công suất phát và tổng công suất tiêu thụ thỏa mãn $|\sum P_{\text{phát}} - \sum P_{\text{tiêu thụ}}| < 0.05\ \text{W}$.
 - **Quy ước dấu thụ động:** Trên từng phần tử, dòng điện đi từ **chân 1 (`+`) → chân 2 (`−`)**. Do đó `P > 0` nghĩa là phần tử **tiêu thụ** công suất, còn `P < 0` nghĩa là phần tử đang **phát** công suất vào mạch.
-- **Đồ thị Quá độ:** Chuyển sang thẻ **Đồ thị** để bật/tắt từng kênh điện áp nút (`v(N...)`) hoặc dòng nhánh (`i(R...)`), lọc nhanh theo loại tín hiệu và rê chuột trên biểu đồ để đọc giá trị tức thời chính xác tại từng mốc thời gian `ms`.
+- **Đồ thị Quá độ:** Chuyển sang thẻ **Đồ thị** để bật/tắt từng kênh điện áp nút (`u(Nút ...)`), điện áp nguồn (`u(E...)`) hoặc dòng nhánh (`i(...)`), lọc nhanh theo loại tín hiệu và rê chuột trên biểu đồ để đọc giá trị tức thời chính xác tại từng mốc thời gian `ms`.
 
 ---
 
@@ -125,7 +128,7 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
 Mở thẻ **Tương đương** ở cột bên phải:
 1. Chọn **Thévenin / Norton** hoặc **Mạng 2 cửa [Z, Y, A]**.
-2. Nhập **Tần số trích xuất** (`0 Hz` cho mạch DC, hoặc `50 Hz`, `100 Hz`, ... cho mạch AC).
+2. Nhập **Tần số trích xuất** (`0 Hz` cho mạch DC, hoặc `50 Hz`, `100 Hz`, ... cho mạch AC) — hoặc nhấp nhanh các nút **Tần số trong mạch** (ví dụ `0 Hz (DC)`, `50 Hz`, `150 Hz`) hiển thị bên dưới ô nhập.
 3. Chọn các nút cửa ra theo số nút hiển thị trên bản vẽ (ví dụ `Nút 2` và `Nút 0` làm cực `(a, b)` cho 1 cửa, hoặc cặp `(1, 1')` và `(2, 2')` cho 2 cửa).
 4. Nhấn **Trích xuất thông số tương đương** — hệ thống tự động giữ nguyên nguồn độc lập khi tính $V_{\text{th}}$ hở mạch, triệt tiêu nguồn độc lập để bơm tín hiệu thử và trả về đầy đủ $V_{\text{th}}, Z_{\text{th}}, I_N, Y_{\text{th}}$ (hoặc cả 3 ma trận `[Z], [Y], [A]` dưới dạng số phức).
 

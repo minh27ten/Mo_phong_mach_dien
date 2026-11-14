@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Complex } from './complex';
-import { extractTheveninNorton, extractTwoPort, runSimulation } from './mna';
+import {
+  extractTheveninNorton,
+  extractTwoPort,
+  getSourceHarmonicSummary,
+  runSimulation,
+} from './mna';
 import { CIRCUIT_PRESETS } from '../data/presets';
 import { CircuitState } from '../types/circuit';
 
@@ -98,7 +103,7 @@ test('Transient Backward Euler RC charging curve with u_C(0) = 2V', () => {
   approx(last, analytical, 0.05, 'u_C(tau) Backward Euler');
 });
 
-test('All 3 built-in presets solve cleanly with power balance', () => {
+test('All built-in presets solve cleanly with power balance', () => {
   for (const preset of CIRCUIT_PRESETS) {
     const res = runSimulation(preset.state, preset.recommendedMode);
     assert.equal(res.success, true, `Preset ${preset.id} failed`);
@@ -369,4 +374,214 @@ test('Regression: TWO_PORT [Y] transient readout, series L t=0+ divider, and DEL
   approx(deltaRes.nodes.find((n) => n.nodeId === deltaRes.nodeMap['g3:B'])!.rms, 380, 0.1, 'Vb magnitude wrt C = 380V');
   approx(deltaRes.elements.find((e) => e.elementId === 't3')!.threePhaseDetails!.iaMag, 10 * Math.sqrt(3), 0.05, 'Delta line current');
 });
+
+test('Mixed-waveform V_SRC (DC + 50Hz + 150Hz) across RC network: DC, AC superposition, Thevenin & Transient', () => {
+  const state: CircuitState = {
+    elements: [
+      {
+        id: 'e1',
+        name: 'E1',
+        type: 'V_SRC',
+        x: 100,
+        y: 200,
+        rotation: 0,
+        waveform: 'MIXED',
+        mixedDcValue: 12,
+        amplitudeType: 'RMS',
+        harmonics: [
+          { id: 'h1', freqHz: 50, amplitude: 100, phaseDeg: 0 },
+          { id: 'h2', freqHz: 150, amplitude: 30, phaseDeg: -30 },
+        ],
+      },
+      {
+        id: 'r1',
+        name: 'R1',
+        type: 'RESISTOR',
+        x: 200,
+        y: 120,
+        rotation: 0,
+        resistance: 100,
+      },
+      {
+        id: 'c1',
+        name: 'C1',
+        type: 'CAPACITOR',
+        x: 280,
+        y: 200,
+        rotation: 90,
+        capacitance: 20e-6,
+      },
+      { id: 'gnd1', name: 'GND', type: 'GND', x: 100, y: 280, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 100, y: 160 }, { x: 100, y: 120 }, { x: 160, y: 120 }] },
+      { id: 'w2', points: [{ x: 240, y: 120 }, { x: 280, y: 120 }, { x: 280, y: 160 }] },
+      { id: 'w3', points: [{ x: 100, y: 240 }, { x: 100, y: 260 }, { x: 280, y: 260 }, { x: 280, y: 240 }] },
+    ],
+  };
+
+  // 1. DC mode suppresses AC harmonics cleanly
+  const dcRes = runSimulation(state, 'DC');
+  assert.equal(dcRes.success, true);
+  assert.ok(dcRes.diagnostics.some((d) => d.level === 'info'));
+  const c1Dc = dcRes.elements.find((e) => e.elementId === 'c1')!;
+  approx(c1Dc.voltageDc, 12, 1e-6, 'VC DC');
+  approx(c1Dc.currentDc, 0, 1e-9, 'IC DC');
+
+  // 2. AC superposition across 0 Hz, 50 Hz, 150 Hz
+  const acRes = runSimulation(state, 'AC');
+  assert.equal(acRes.success, true);
+  assert.equal(acRes.singleFrequencyHz, null);
+  assert.deepEqual(acRes.frequenciesHz, [0, 50, 150]);
+
+  const R = 100;
+  const C = 20e-6;
+  const x50 = 1 / (2 * Math.PI * 50 * C);
+  const x150 = 1 / (2 * Math.PI * 150 * C);
+  const uc50 = (100 * x50) / Math.hypot(R, x50);
+  const uc150 = (30 * x150) / Math.hypot(R, x150);
+  const expectedUcRms = Math.hypot(12, uc50, uc150);
+  const i50 = 100 / Math.hypot(R, x50);
+  const i150 = 30 / Math.hypot(R, x150);
+  const expectedIRms = Math.hypot(i50, i150);
+  const expectedP = expectedIRms * expectedIRms * R;
+
+  const c1Ac = acRes.elements.find((e) => e.elementId === 'c1')!;
+  const r1Ac = acRes.elements.find((e) => e.elementId === 'r1')!;
+  approx(c1Ac.voltageRms, expectedUcRms, 1e-4, 'C1 total RMS voltage');
+  approx(c1Ac.voltageDc, 12, 1e-6, 'C1 DC voltage');
+  assert.equal(c1Ac.voltageHarmonics?.length, 2);
+  approx(c1Ac.voltageHarmonics![0].rms, uc50, 1e-4, 'C1 50Hz RMS');
+  approx(c1Ac.voltageHarmonics![1].rms, uc150, 1e-4, 'C1 150Hz RMS');
+  approx(r1Ac.currentRms, expectedIRms, 1e-5, 'R1 total RMS current');
+  approx(r1Ac.pWatts, expectedP, 1e-3, 'R1 total active power');
+  assert.ok(r1Ac.instantaneousVoltage && r1Ac.instantaneousVoltage.includes('cos'));
+  approx(acRes.powerBalance!.pGenerated, acRes.powerBalance!.pConsumed, 1e-3, 'Mixed power balance');
+
+  // 3. Thevenin extraction at 0 Hz, 50 Hz, 150 Hz
+  const nodeOut = acRes.nodeMap['c1:1'];
+  const th0 = extractTheveninNorton(state, nodeOut, '0', 0);
+  assert.equal(th0.success, true);
+  approx(th0.vth.re, 12, 1e-5, 'Vth(0Hz)');
+  approx(th0.zth.re, 100, 1e-3, 'Zth(0Hz)');
+
+  const th50 = extractTheveninNorton(state, nodeOut, '0', 50);
+  assert.equal(th50.success, true);
+  approx(Math.hypot(th50.vth.re, th50.vth.im), uc50, 1e-4, '|Vth(50Hz)|');
+
+  const th150 = extractTheveninNorton(state, nodeOut, '0', 150);
+  assert.equal(th150.success, true);
+  approx(Math.hypot(th150.vth.re, th150.vth.im), uc150, 1e-4, '|Vth(150Hz)|');
+
+  // 4. Transient waveform reproduces exact mixed source excitation
+  const trRes = runSimulation(state, 'TRANSIENT', { dt: 0.0002, tEnd: 0.02 });
+  assert.equal(trRes.success, true);
+  const tr = trRes.transient!;
+  const uSrc = tr.elementVoltages['e1'];
+  assert.ok(uSrc && uSrc.length === tr.times.length);
+  for (let idx = 0; idx < tr.times.length; idx += 15) {
+    const t = tr.times[idx];
+    const analyticalU =
+      12 +
+      100 * Math.SQRT2 * Math.cos(2 * Math.PI * 50 * t) +
+      30 * Math.SQRT2 * Math.cos(2 * Math.PI * 150 * t - Math.PI / 6);
+    approx(uSrc[idx], analyticalU, 1e-4, `Transient E1(t=${t})`);
+  }
+});
+
+test('Mixed-waveform I_SRC with PEAK amplitudes and same-frequency phasor summation', () => {
+  const j1El = {
+    id: 'j1',
+    name: 'J1',
+    type: 'I_SRC' as const,
+    x: 100,
+    y: 200,
+    rotation: 0 as const,
+    waveform: 'MIXED' as const,
+    mixedDcValue: 2,
+    amplitudeType: 'PEAK' as const,
+    harmonics: [
+      { id: 'h0', freqHz: 0, amplitude: 1, phaseDeg: 180 }, // -1 A DC -> net DC = 1 A
+      { id: 'h1', freqHz: 50, amplitude: 6, phaseDeg: 0 },
+      { id: 'h2', freqHz: 50, amplitude: 8, phaseDeg: 90 }, // 6 + j8 => peak 10 A => RMS 10/sqrt(2)
+    ],
+  };
+
+  const summary = getSourceHarmonicSummary(j1El);
+  approx(summary.dc, 1, 1e-9, 'Net DC after combining 0Hz harmonic');
+  assert.equal(summary.harmonics.length, 1, 'Duplicate 50Hz entries merge into one phasor');
+  approx(summary.harmonics[0].peak, 10, 1e-6, 'Vector sum peak at 50Hz');
+  approx(summary.harmonics[0].rms, 10 / Math.SQRT2, 1e-6, 'Vector sum RMS at 50Hz');
+  approx(summary.totalRms, Math.hypot(1, 10 / Math.SQRT2), 1e-6, 'Total RMS');
+
+  const state: CircuitState = {
+    elements: [
+      j1El,
+      { id: 'r1', name: 'R1', type: 'RESISTOR', x: 220, y: 200, rotation: 90, resistance: 10 },
+      { id: 'gnd1', name: 'GND', type: 'GND', x: 100, y: 280, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 100, y: 160 }, { x: 220, y: 160 }] },
+      { id: 'w2', points: [{ x: 100, y: 240 }, { x: 100, y: 260 }, { x: 220, y: 260 }, { x: 220, y: 240 }] },
+    ],
+  };
+
+  const res = runSimulation(state, 'AC');
+  assert.equal(res.success, true);
+  assert.deepEqual(res.frequenciesHz, [0, 50]);
+  const r1 = res.elements.find((e) => e.elementId === 'r1')!;
+  approx(r1.currentDc, 1, 1e-6, 'R1 DC current');
+  approx(r1.currentRms, Math.hypot(1, 10 / Math.SQRT2), 1e-5, 'R1 RMS current');
+  approx(r1.pWatts, (1 + 50) * 10, 1e-4, 'R1 total power P = I_rms^2 * R = 510W');
+});
+
+test('Mixed-source preset works in DC, AC, and TRANSIENT modes and preserves three-phase details in multi-frequency circuits', () => {
+  const mixedPreset = CIRCUIT_PRESETS.find((p) => p.id === 'mixed-source');
+  assert.ok(mixedPreset, 'mixed-source preset should exist');
+  for (const mode of ['DC', 'AC', 'TRANSIENT'] as const) {
+    const res = runSimulation(mixedPreset!.state, mode, mixedPreset!.transientConfig);
+    assert.equal(res.success, true, `mixed-source ${mode} failed`);
+    if (mode !== 'TRANSIENT' && res.powerBalance) {
+      approx(res.powerBalance.pGenerated, res.powerBalance.pConsumed, 1e-2, `mixed-source ${mode} power balance`);
+    }
+  }
+
+  // Three-phase 50Hz + auxiliary DC branch in same schematic retains threePhaseDetails
+  const combinedTp: CircuitState = {
+    elements: [
+      ...CIRCUIT_PRESETS.find((p) => p.id === 'three-phase-unbalanced')!.state.elements,
+      {
+        id: 'e_dc',
+        name: 'Edc',
+        type: 'V_SRC',
+        x: 120,
+        y: 440,
+        rotation: 0,
+        waveform: 'DC',
+        dcValue: 12,
+      },
+      { id: 'r_dc', name: 'Rdc', type: 'RESISTOR', x: 240, y: 440, rotation: 90, resistance: 12 },
+    ],
+    wires: [
+      ...CIRCUIT_PRESETS.find((p) => p.id === 'three-phase-unbalanced')!.state.wires,
+      { id: 'wd1', points: [{ x: 120, y: 400 }, { x: 240, y: 400 }] },
+      {
+        id: 'wd2',
+        points: [
+          { x: 120, y: 480 },
+          { x: 240, y: 480 },
+          { x: 300, y: 480 },
+          { x: 300, y: 320 },
+          { x: 240, y: 320 },
+        ],
+      },
+    ],
+  };
+  const tpMixedRes = runSimulation(combinedTp, 'AC');
+  assert.equal(tpMixedRes.success, true);
+  assert.deepEqual(tpMixedRes.frequenciesHz, [0, 50]);
+  const t3 = tpMixedRes.elements.find((e) => e.elementId === 't3')!;
+  assert.ok(t3.threePhaseDetails, 'threePhaseDetails must be preserved in multi-frequency circuits');
+});
+
 

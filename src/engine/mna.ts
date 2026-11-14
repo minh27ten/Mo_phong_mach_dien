@@ -4,6 +4,7 @@ import {
   ComplexInput,
   DiagnosticMessage,
   ElementBranchResult,
+  HarmonicComponent,
   NodeVoltageResult,
   SimulationMode,
   SimulationResult,
@@ -23,27 +24,104 @@ function toComplex(c?: ComplexInput, fallbackRe = 0, fallbackIm = 0): Complex {
   return new Complex(Number.isFinite(c.re) ? c.re : fallbackRe, Number.isFinite(c.im) ? c.im : fallbackIm);
 }
 
-function getSourceRmsPhasor(el: CircuitElement): { freqHz: number; phasorRms: Complex } {
-  const wf = el.waveform ?? 'DC';
-  if (wf === 'DC') {
-    return { freqHz: 0, phasorRms: new Complex(el.dcValue ?? 0, 0) };
-  }
-  if (wf === 'STEP') {
-    // Trong chế độ xác lập (DC/AC), nguồn step đóng mạch về giá trị sau cùng
-    return { freqHz: 0, phasorRms: new Complex(el.stepFinal ?? 0, 0) };
-  }
-  // AC Sine
-  const raw = el.acValue ?? 0;
-  const freq = Math.max(0, el.freqHz ?? 50);
-  const phase = el.phaseDeg ?? 0;
-  if (freq === 0) {
+function sinusoidToPhasor(
+  raw: number,
+  ampType: 'RMS' | 'PEAK',
+  freqHz: number,
+  phaseDeg: number,
+): { freqHz: number; phasorRms: Complex } {
+  const safeRaw = Number.isFinite(raw) ? raw : 0;
+  const freq = Number.isFinite(freqHz) ? Math.max(0, freqHz) : 0;
+  const phase = Number.isFinite(phaseDeg) ? phaseDeg : 0;
+  if (freq <= 1e-9) {
     // Với f = 0 Hz, u(t) = Um * cos(phi) là nguồn DC thực thuần
-    const peak = el.amplitudeType === 'RMS' ? raw * SQRT2 : raw;
+    const peak = ampType === 'RMS' ? safeRaw * SQRT2 : safeRaw;
     const rad = (phase * Math.PI) / 180;
     return { freqHz: 0, phasorRms: new Complex(peak * Math.cos(rad), 0) };
   }
-  const rms = el.amplitudeType === 'PEAK' ? raw / SQRT2 : raw;
+  const rms = ampType === 'PEAK' ? safeRaw / SQRT2 : safeRaw;
   return { freqHz: freq, phasorRms: Complex.fromPolar(rms, phase) };
+}
+
+export function getSourceComponents(
+  el: CircuitElement,
+): Array<{ freqHz: number; phasorRms: Complex }> {
+  const wf = el.waveform ?? 'DC';
+  if (wf === 'DC') {
+    return [{ freqHz: 0, phasorRms: new Complex(el.dcValue ?? 0, 0) }];
+  }
+  if (wf === 'STEP') {
+    // Trong chế độ xác lập (DC/AC), nguồn step đóng mạch về giá trị sau cùng
+    return [{ freqHz: 0, phasorRms: new Complex(el.stepFinal ?? 0, 0) }];
+  }
+  const ampType = el.amplitudeType ?? 'RMS';
+  if (wf === 'MIXED') {
+    const dcOffset = Number.isFinite(el.mixedDcValue)
+      ? (el.mixedDcValue as number)
+      : (el.dcValue ?? 0);
+    const buckets: Array<{ freqHz: number; phasorRms: Complex }> = [
+      { freqHz: 0, phasorRms: new Complex(dcOffset, 0) },
+    ];
+    for (const h of el.harmonics ?? []) {
+      const comp = sinusoidToPhasor(h.amplitude, ampType, h.freqHz, h.phaseDeg);
+      const existing = buckets.find((b) => Math.abs(b.freqHz - comp.freqHz) < 1e-6);
+      if (existing) {
+        existing.phasorRms = existing.phasorRms.add(comp.phasorRms);
+      } else {
+        buckets.push(comp);
+      }
+    }
+    return buckets.sort((a, b) => a.freqHz - b.freqHz);
+  }
+  // AC Sine
+  return [sinusoidToPhasor(el.acValue ?? 0, ampType, el.freqHz ?? 50, el.phaseDeg ?? 0)];
+}
+
+export function getSourcePhasorAtFreq(el: CircuitElement, targetFreqHz: number): Complex {
+  let sum = Complex.zero();
+  for (const c of getSourceComponents(el)) {
+    if (Math.abs(c.freqHz - targetFreqHz) < 1e-6) {
+      sum = sum.add(c.phasorRms);
+    }
+  }
+  return sum;
+}
+
+export function getSourceHarmonicSummary(el: CircuitElement): {
+  dc: number;
+  acRms: number;
+  totalRms: number;
+  harmonics: Array<{ freqHz: number; rms: number; peak: number; phaseDeg: number }>;
+  instantaneous: string;
+} {
+  let dc = 0;
+  let acSq = 0;
+  const harmonics: Array<{ freqHz: number; rms: number; peak: number; phaseDeg: number }> = [];
+  for (const c of getSourceComponents(el)) {
+    if (c.freqHz === 0) {
+      dc += c.phasorRms.re;
+    } else {
+      const rms = c.phasorRms.mag();
+      if (rms > 1e-12) {
+        acSq += rms * rms;
+        harmonics.push({
+          freqHz: c.freqHz,
+          rms,
+          peak: rms * SQRT2,
+          phaseDeg: c.phasorRms.deg(),
+        });
+      }
+    }
+  }
+  const acRms = Math.sqrt(acSq);
+  const totalRms = Math.hypot(dc, acRms);
+  return {
+    dc,
+    acRms,
+    totalRms,
+    harmonics,
+    instantaneous: formatInstantaneous(dc, harmonics),
+  };
 }
 
 function getSourceTransientValue(el: CircuitElement, t: number): number {
@@ -53,9 +131,23 @@ function getSourceTransientValue(el: CircuitElement, t: number): number {
     const tStep = el.stepTime ?? 0;
     return t >= tStep - 1e-12 ? (el.stepFinal ?? 0) : (el.stepInit ?? 0);
   }
+  const ampType = el.amplitudeType ?? 'RMS';
+  if (wf === 'MIXED') {
+    let val = Number.isFinite(el.mixedDcValue)
+      ? (el.mixedDcValue as number)
+      : (el.dcValue ?? 0);
+    for (const h of el.harmonics ?? []) {
+      const raw = Number.isFinite(h.amplitude) ? h.amplitude : 0;
+      const peak = ampType === 'RMS' ? raw * SQRT2 : raw;
+      const freq = Number.isFinite(h.freqHz) ? Math.max(0, h.freqHz) : 0;
+      const rad = ((Number.isFinite(h.phaseDeg) ? h.phaseDeg : 0) * Math.PI) / 180;
+      val += peak * Math.cos(2 * Math.PI * freq * t + rad);
+    }
+    return val;
+  }
   // AC Sine: u(t) = Um * cos(2*pi*f*t + phi)
   const raw = el.acValue ?? 0;
-  const peak = el.amplitudeType === 'RMS' ? raw * SQRT2 : raw;
+  const peak = ampType === 'RMS' ? raw * SQRT2 : raw;
   const freq = el.freqHz ?? 50;
   const rad = ((el.phaseDeg ?? 0) * Math.PI) / 180;
   return peak * Math.cos(2 * Math.PI * freq * t + rad);
@@ -305,10 +397,7 @@ function solveSingleFrequencyMna(
         const aux = elementAuxMap.get(el.id)!.i;
         let V = Complex.zero();
         if (!options?.disableIndependentSources) {
-          const src = getSourceRmsPhasor(el);
-          if (Math.abs(src.freqHz - targetFreqHz) < 1e-6) {
-            V = src.phasorRms;
-          }
+          V = getSourcePhasorAtFreq(el, targetFreqHz);
         }
         stampVoltageSource(A, b, p, n, aux, V);
         break;
@@ -318,10 +407,7 @@ function solveSingleFrequencyMna(
         const n = getPinNode(el.id, 'n');
         let I = Complex.zero();
         if (!options?.disableIndependentSources) {
-          const src = getSourceRmsPhasor(el);
-          if (Math.abs(src.freqHz - targetFreqHz) < 1e-6) {
-            I = src.phasorRms;
-          }
+          I = getSourcePhasorAtFreq(el, targetFreqHz);
         }
         stampCurrentSource(b, p, n, I);
         break;
@@ -728,8 +814,7 @@ function extractElementBranchAtFreq(
     }
     case 'I_SRC': {
       const U = getPinV('p').sub(getPinV('n'));
-      const src = getSourceRmsPhasor(el);
-      const Is = Math.abs(src.freqHz - freqHz) < 1e-6 ? src.phasorRms : Complex.zero();
+      const Is = getSourcePhasorAtFreq(el, freqHz);
       // Dòng Is đi ra khỏi cực p -> theo quy ước thụ động I = -Is
       const I = Is.neg();
       return { U, I, S: U.mul(I.conj()) };
@@ -1175,14 +1260,25 @@ function runTransientSimulation(
   const acFreqEl = elements.find(
     (e) => (e.type === 'V_SRC' || e.type === 'I_SRC') && e.waveform === 'AC' && (e.freqHz ?? 50) > 0,
   );
+  const mixedFreqEl = elements.find(
+    (e) =>
+      (e.type === 'V_SRC' || e.type === 'I_SRC') &&
+      e.waveform === 'MIXED' &&
+      (e.harmonics ?? []).some((h) => Number.isFinite(h.freqHz) && h.freqHz > 0 && Math.abs(h.amplitude) > 0),
+  );
+  const mixedFirstFreq = mixedFreqEl?.harmonics?.find(
+    (h) => Number.isFinite(h.freqHz) && h.freqHz > 0 && Math.abs(h.amplitude) > 0,
+  )?.freqHz;
   const opFreqEl = elements.find((e) => e.type === 'ONE_PORT' && (e.onePortFreqHz ?? 50) > 0);
   const fRef = tpFreqEl
     ? (tpFreqEl.tpFreqHz ?? 50)
     : acFreqEl
       ? (acFreqEl.freqHz ?? 50)
-      : opFreqEl
-        ? (opFreqEl.onePortFreqHz ?? 50)
-        : 50;
+      : mixedFirstFreq
+        ? mixedFirstFreq
+        : opFreqEl
+          ? (opFreqEl.onePortFreqHz ?? 50)
+          : 50;
   const omegaRef = 2 * Math.PI * fRef;
 
   interface ThreePhaseCompanionBranch {
@@ -1849,17 +1945,44 @@ export function runSimulation(
 
   // Thu thập tất cả tần số nguồn độc lập
   const freqs = new Set<number>();
+  const addFreq = (f: number) => {
+    const clean = f <= 1e-9 ? 0 : f;
+    for (const existing of freqs) {
+      if (Math.abs(existing - clean) < 1e-6) return;
+    }
+    freqs.add(clean);
+  };
+
   if (mode === 'DC' || mode === 'DC_SS') {
     freqs.add(0);
+    const hasAcContent = state.elements.some((el) => {
+      if (el.type === 'V_SRC' || el.type === 'I_SRC') {
+        return getSourceComponents(el).some((c) => c.freqHz > 0 && c.phasorRms.mag() > 1e-12);
+      }
+      if (el.type === 'ONE_PORT') {
+        return (el.onePortFreqHz ?? 50) > 0 && Math.abs(el.onePortMag ?? 0) > 1e-12;
+      }
+      if (el.type === 'THREE_PHASE_SRC') {
+        return (el.tpFreqHz ?? 50) > 0 && Math.abs(el.tpVoltageRms ?? 220) > 1e-12;
+      }
+      return false;
+    });
+    if (hasAcContent) {
+      diagnostics.push({
+        level: 'info',
+        text: 'Chế độ DC chỉ giải thành phần một chiều (0 Hz); các thành phần xoay chiều (AC/sóng hài) tạm thời được triệt tiêu.',
+      });
+    }
   } else {
     for (const el of state.elements) {
       if (el.type === 'V_SRC' || el.type === 'I_SRC') {
-        const s = getSourceRmsPhasor(el);
-        if (s.phasorRms.mag() > 1e-12) freqs.add(s.freqHz);
+        for (const s of getSourceComponents(el)) {
+          if (s.phasorRms.mag() > 1e-12) addFreq(s.freqHz);
+        }
       } else if (el.type === 'ONE_PORT') {
-        if ((el.onePortMag ?? 0) !== 0) freqs.add(el.onePortFreqHz ?? 50);
+        if ((el.onePortMag ?? 0) !== 0) addFreq(Math.max(0, el.onePortFreqHz ?? 50));
       } else if (el.type === 'THREE_PHASE_SRC') {
-        freqs.add(el.tpFreqHz ?? 50);
+        addFreq(Math.max(0, el.tpFreqHz ?? 50));
       }
     }
     if (freqs.size === 0) freqs.add(50);
@@ -1869,13 +1992,51 @@ export function runSimulation(
   const acFreqs = freqList.filter((f) => f > 0);
   const singleFrequencyHz = acFreqs.length === 1 && !freqs.has(0) ? acFreqs[0] : null;
 
+  if (mode === 'AC' && freqList.length > 1) {
+    diagnostics.push({
+      level: 'info',
+      text: `Mạch nguồn hỗn hợp (${freqList.length} tần số): đang áp dụng xếp chồng tuyến tính tại ${freqList
+        .map((f) => (f === 0 ? '0 Hz (DC)' : `${f} Hz`))
+        .join(', ')}.`,
+    });
+  }
+
+  if (mode === 'AC' && acFreqs.length > 1) {
+    const hasStaticReactiveBlock = state.elements.some((el) => {
+      if (el.type === 'ONE_PORT') return Math.abs(el.onePortZ?.im ?? 0) > 1e-12;
+      if (el.type === 'TWO_PORT') {
+        return [el.m11, el.m12, el.m21, el.m22].some((m) => Math.abs(m?.im ?? 0) > 1e-12);
+      }
+      if (el.type === 'THREE_PHASE_LINE') {
+        return (
+          Math.abs(el.lineZ?.im ?? 0) > 1e-12 ||
+          (el.hasNeutral !== false && Math.abs(el.lineZn?.im ?? 0) > 1e-12)
+        );
+      }
+      if (el.type === 'THREE_PHASE_LOAD') {
+        return (
+          Math.abs(el.loadZa?.im ?? 0) > 1e-12 ||
+          (el.loadSymmetric === false &&
+            (Math.abs(el.loadZb?.im ?? 0) > 1e-12 || Math.abs(el.loadZc?.im ?? 0) > 1e-12))
+        );
+      }
+      return false;
+    });
+    if (hasStaticReactiveBlock) {
+      diagnostics.push({
+        level: 'warning',
+        text: 'Mạch có phần tử tổng trở R + jX tĩnh (một cửa/hai cửa/3 pha): phần ảo jX giữ nguyên giá trị theo thiết lập khi xếp chồng nhiều tần số AC.',
+      });
+    }
+  }
+
   // Giải MNA cho từng tần số và xếp chồng kết quả
   const nodeAccum = new Map<
     string,
     {
       dc: number;
       acSqSum: number;
-      harmonics: Array<{ freqHz: number; rms: number; peak: number; phaseDeg: number }>;
+      harmonics: HarmonicComponent[];
       singlePhasor?: Complex;
     }
   >();
@@ -1883,6 +2044,7 @@ export function runSimulation(
     nodeAccum.set(nid, { dc: 0, acSqSum: 0, harmonics: [] });
   }
 
+  type ThreePhaseDetails = NonNullable<ElementBranchResult['threePhaseDetails']>;
   const elemAccum = new Map<
     string,
     {
@@ -1892,11 +2054,24 @@ export function runSimulation(
       iAcSqSum: number;
       pSum: number;
       qSum: number;
-      uHarmonics: Array<{ freqHz: number; peak: number; phaseDeg: number }>;
-      iHarmonics: Array<{ freqHz: number; peak: number; phaseDeg: number }>;
+      uHarmonics: HarmonicComponent[];
+      iHarmonics: HarmonicComponent[];
       uSingle?: Complex;
       iSingle?: Complex;
-      threePhase?: ElementBranchResult['threePhaseDetails'];
+      threePhase?: ThreePhaseDetails;
+      threePhaseAccum?: {
+        pTotal: number;
+        qTotal: number;
+        iaSq: number;
+        ibSq: number;
+        icSq: number;
+        inSq: number;
+        hasNeutral: boolean;
+        uNeutSq: number;
+        hasNeutralShift: boolean;
+        bestScore: number;
+        bestSample: ThreePhaseDetails;
+      };
     }
   >();
   for (const el of state.elements) {
@@ -1963,12 +2138,50 @@ export function runSimulation(
         acc.iAcSqSum += iMag * iMag;
         acc.pSum += br.S.re;
         acc.qSum += br.S.im;
-        acc.uHarmonics.push({ freqHz: f, peak: uMag * SQRT2, phaseDeg: br.U.deg() });
-        acc.iHarmonics.push({ freqHz: f, peak: iMag * SQRT2, phaseDeg: br.I.deg() });
+        acc.uHarmonics.push({ freqHz: f, rms: uMag, peak: uMag * SQRT2, phaseDeg: br.U.deg() });
+        acc.iHarmonics.push({ freqHz: f, rms: iMag, peak: iMag * SQRT2, phaseDeg: br.I.deg() });
         if (singleFrequencyHz !== null) {
           acc.uSingle = br.U;
           acc.iSingle = br.I;
           if (br.threePhase) acc.threePhase = br.threePhase;
+        }
+      }
+      if (singleFrequencyHz === null && br.threePhase) {
+        const tp = br.threePhase;
+        const score = tp.iaMag + tp.ibMag + tp.icMag + (f > 0 ? 1e-9 : 0);
+        if (!acc.threePhaseAccum) {
+          acc.threePhaseAccum = {
+            pTotal: tp.pTotal,
+            qTotal: tp.qTotal,
+            iaSq: tp.iaMag * tp.iaMag,
+            ibSq: tp.ibMag * tp.ibMag,
+            icSq: tp.icMag * tp.icMag,
+            inSq: (tp.inMag ?? 0) * (tp.inMag ?? 0),
+            hasNeutral: tp.inMag !== undefined,
+            uNeutSq: (tp.uNeutralShift ?? 0) * (tp.uNeutralShift ?? 0),
+            hasNeutralShift: tp.uNeutralShift !== undefined,
+            bestScore: score,
+            bestSample: tp,
+          };
+        } else {
+          const tpa = acc.threePhaseAccum;
+          tpa.pTotal += tp.pTotal;
+          tpa.qTotal += tp.qTotal;
+          tpa.iaSq += tp.iaMag * tp.iaMag;
+          tpa.ibSq += tp.ibMag * tp.ibMag;
+          tpa.icSq += tp.icMag * tp.icMag;
+          if (tp.inMag !== undefined) {
+            tpa.hasNeutral = true;
+            tpa.inSq += tp.inMag * tp.inMag;
+          }
+          if (tp.uNeutralShift !== undefined) {
+            tpa.hasNeutralShift = true;
+            tpa.uNeutSq += tp.uNeutralShift * tp.uNeutralShift;
+          }
+          if (score > tpa.bestScore) {
+            tpa.bestScore = score;
+            tpa.bestSample = tp;
+          }
         }
       }
     }
@@ -2023,6 +2236,31 @@ export function runSimulation(
         else qGenerated += -acc.qSum;
       }
 
+      const threePhaseDetails =
+        acc.threePhase ??
+        (acc.threePhaseAccum
+          ? {
+              iaMag: Math.sqrt(acc.threePhaseAccum.iaSq),
+              iaDeg: acc.threePhaseAccum.bestSample.iaDeg,
+              ibMag: Math.sqrt(acc.threePhaseAccum.ibSq),
+              ibDeg: acc.threePhaseAccum.bestSample.ibDeg,
+              icMag: Math.sqrt(acc.threePhaseAccum.icSq),
+              icDeg: acc.threePhaseAccum.bestSample.icDeg,
+              ...(acc.threePhaseAccum.hasNeutral
+                ? {
+                    inMag: Math.sqrt(acc.threePhaseAccum.inSq),
+                    inDeg: acc.threePhaseAccum.bestSample.inDeg,
+                  }
+                : {}),
+              ...(acc.threePhaseAccum.hasNeutralShift
+                ? { uNeutralShift: Math.sqrt(acc.threePhaseAccum.uNeutSq) }
+                : {}),
+              pTotal: acc.threePhaseAccum.pTotal,
+              qTotal: acc.threePhaseAccum.qTotal,
+              sTotal: Math.hypot(acc.threePhaseAccum.pTotal, acc.threePhaseAccum.qTotal),
+            }
+          : undefined);
+
       return {
         elementId: el.id,
         name: el.name,
@@ -2037,9 +2275,12 @@ export function runSimulation(
         currentPhasorDeg: acc.iSingle?.deg(),
         pWatts: acc.pSum,
         qVars: acc.qSum,
-        sVA: acc.threePhase ? acc.threePhase.sTotal : uRms * iRms,
+        sVA: threePhaseDetails ? threePhaseDetails.sTotal : uRms * iRms,
         instantaneousCurrent: formatInstantaneous(acc.iDc, acc.iHarmonics),
-        threePhaseDetails: acc.threePhase,
+        instantaneousVoltage: formatInstantaneous(acc.uDc, acc.uHarmonics),
+        voltageHarmonics: acc.uHarmonics,
+        currentHarmonics: acc.iHarmonics,
+        threePhaseDetails,
       };
     });
 
@@ -2051,6 +2292,7 @@ export function runSimulation(
     allNodeIds: netlist.allNodeIds,
     autoGroundUsed: netlist.autoGroundUsed,
     singleFrequencyHz,
+    frequenciesHz: freqList,
     nodes,
     elements: elementResults,
     powerBalance: {

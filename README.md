@@ -12,8 +12,8 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
 
 | Tệp phát hành (GitHub Releases) | Dung lượng | Hệ điều hành | Cách sử dụng |
 | :--- | :---: | :--- | :--- |
-| **`MachDienLab-VI.exe`** | ~1.08 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, không cần cài thêm DLL rời). |
-| **`MachDienLab-VI-Portable.html`** | ~392 KB | Windows / macOS / Linux | Một tệp HTML duy nhất tự chứa toàn bộ ứng dụng — nhấn đúp để mở offline bằng bất kỳ trình duyệt hiện đại nào (Edge, Chrome, Firefox, Safari) qua `file://`. |
+| **`MachDienLab-VI.exe`** | ~1.10 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, không cần cài thêm DLL rời). |
+| **`MachDienLab-VI-Portable.html`** | ~413 KB | Windows / macOS / Linux | Một tệp HTML duy nhất tự chứa toàn bộ ứng dụng — nhấn đúp để mở offline bằng bất kỳ trình duyệt hiện đại nào (Edge, Chrome, Firefox, Safari) qua `file://`. |
 
 *Hoặc chạy trực tiếp bản web nếu đã bật GitHub Pages tại https://minh27ten.github.io/Mo_phong_mach_dien/.*
 
@@ -35,7 +35,7 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
   - **Mạng hai cửa:** Chọn 2 cặp nút Cửa 1 và Cửa 2 để tính trực tiếp ma trận thông số $[Z]$, $[Y]$ và $[A]$.
 - **Hệ thống điện 3 pha & Sơ đồ trực quan:**
   - Nguồn 3 pha, đường dây có tổng trở dây trung tính $Z_N$, tải 3 pha $Y/\Delta$ hỗ trợ tải không đối xứng và tính **điện áp lệch trung tính $U_{N'N}$**.
-  - Lưới vẽ `20 px`, nối dây trực giao bẻ góc (`Space` đảo góc), hiển thị số đo ngay trên mạch, 3 mạch mẫu (*RLC & Hỗ cảm*, *Op-Amp & Phụ thuộc*, *Hệ thống 3 pha*) và Xuất / Nhập tệp JSON.
+  - Lưới vẽ `20 px`, nối dây trực giao bẻ góc (`Space` đảo góc), hiển thị số đo ngay trên mạch, 4 mạch mẫu (*RLC & Hỗ cảm*, *Op-Amp & Phụ thuộc*, *Hệ thống 3 pha*, *Nguồn hỗn hợp*) và Xuất / Nhập tệp JSON.
 
 ---
 
@@ -45,7 +45,7 @@ Ngoài **Nút đất chuẩn (`GND`)**, thư viện hỗ trợ 16 phần tử k�
 
 | Nhóm | Ký hiệu / Mã loại | Phần tử |
 | :--- | :--- | :--- |
-| **Nguồn độc lập** | `V_SRC` (`E`), `I_SRC` (`J`) | Nguồn áp độc lập, Nguồn dòng độc lập (DC / AC / Step) |
+| **Nguồn độc lập** | `V_SRC` (`E`), `I_SRC` (`J`) | Nguồn áp độc lập, Nguồn dòng độc lập (DC / AC / Hỗn hợp đa sóng hài / Step) |
 | **Phần tử thụ động** | `RESISTOR` (`R`), `CAPACITOR` (`C`), `INDUCTOR` (`L`), `MUTUAL` (`M`) | Điện trở, Tụ điện, Cuộn cảm, Ghép hỗ cảm |
 | **Nguồn phụ thuộc** | `VCVS`, `CCVS`, `VCCS`, `CCCS` | 4 loại nguồn phụ thuộc tuyến tính ($\mu, r, g, \beta$) |
 | **Khuếch đại** | `OPAMP` (`OA`) | Khuếch đại thuật toán lý tưởng ($V_+ = V_-$, $I_{\text{in}} = 0$) |
@@ -77,7 +77,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 | :--- | :--- |
 | `npm run dev` | Chạy máy chủ phát triển Vite tại cổng `3000` |
 | `npm run lint` | Kiểm tra kiểu tĩnh TypeScript (`tsc --noEmit`) |
-| `npm test` | Chạy 31 bài kiểm thử tự động bộ giải MNA & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
+| `npm test` | Chạy 34 bài kiểm thử tự động bộ giải MNA & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
 | `npm run build` | Build bản web tối ưu vào `dist/` |
 | `npm run preview` | Xem trước bản build `dist/` qua Vite Preview |
 | `npm run build:portable` | Đóng gói bản HTML đơn tệp chạy offline (`dist-portable/index.html`) |
@@ -105,7 +105,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 │   │   ├── mna.test.ts            # Unit test cơ bản
 │   │   └── __tests__/             # solver.test.ts & stress.test.ts
 │   ├── components/                # Giao diện React (Canvas, Palette, Inspector, TransientPlot...)
-│   ├── data/presets.ts            # 3 mạch mẫu tích hợp sẵn
+│   ├── data/presets.ts            # 4 mạch mẫu tích hợp sẵn
 │   ├── types/circuit.ts           # Định nghĩa kiểu dữ liệu mạch điện
 │   ├── App.tsx                    # Điều phối trạng thái & phím tắt
 │   └── main.tsx

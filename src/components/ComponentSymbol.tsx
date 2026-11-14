@@ -50,6 +50,11 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
                 strokeWidth={1.5}
                 fill="none"
               />
+            ) : element?.waveform === 'MIXED' ? (
+              <g stroke={accent} strokeWidth={1.45} fill="none">
+                <line x1={-6} y1={1.5} x2={6} y2={1.5} />
+                <path d="M -7 8 Q -3.5 3.5, 0 8 T 7 8" />
+              </g>
             ) : element?.waveform === 'STEP' ? (
               <polyline points="-7,8 -2,8 -2,2 7,2" stroke={accent} strokeWidth={1.5} fill="none" />
             ) : (
@@ -63,8 +68,19 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             <line x1={0} y1={-40} x2={0} y2={-18} />
             <line x1={0} y1={18} x2={0} y2={40} />
             <circle cx={0} cy={0} r={18} fill="#FFFFFF" />
-            <line x1={0} y1={10} x2={0} y2={-9} stroke={accent} strokeWidth={1.75} />
-            <polyline points="-5,-4 0,-10 5,-4" stroke={accent} strokeWidth={1.75} fill="none" />
+            {element?.waveform === 'MIXED' ? (
+              <g stroke={accent} strokeWidth={1.5} fill="none">
+                <line x1={-5} y1={9} x2={-5} y2={-9} />
+                <polyline points="-9,-4 -5,-10 -1,-4" />
+                <line x1={2} y1={-3} x2={11} y2={-3} strokeWidth={1.35} />
+                <path d="M 1 4 Q 3.5 0, 6 4 T 11 4" strokeWidth={1.35} />
+              </g>
+            ) : (
+              <>
+                <line x1={0} y1={10} x2={0} y2={-9} stroke={accent} strokeWidth={1.75} />
+                <polyline points="-5,-4 0,-10 5,-4" stroke={accent} strokeWidth={1.75} fill="none" />
+              </>
+            )}
           </g>
         );
       case 'RESISTOR':
@@ -323,15 +339,31 @@ export function getElementSummaryText(el: CircuitElement): string {
   switch (el.type) {
     case 'GND':
       return '0 V';
-    case 'V_SRC':
+    case 'V_SRC': {
       if (el.waveform === 'AC')
         return `${el.acValue ?? 220}V ∠${el.phaseDeg ?? 0}° (${el.freqHz ?? 50}Hz)`;
+      if (el.waveform === 'MIXED') {
+        const dc = el.mixedDcValue ?? el.dcValue ?? 0;
+        const freqs = (el.harmonics ?? []).filter((h) => Math.abs(h.amplitude) > 0).map((h) => h.freqHz);
+        if (freqs.length === 0) return `${dc} V`;
+        const freqText = `${freqs.slice(0, 2).join('/')}${freqs.length > 2 ? '…' : ''}Hz`;
+        return `${dc}V + ${freqText}`;
+      }
       if (el.waveform === 'STEP') return `Step ${el.stepInit ?? 0}→${el.stepFinal ?? 12}V`;
       return `${el.dcValue ?? 12} V`;
-    case 'I_SRC':
+    }
+    case 'I_SRC': {
       if (el.waveform === 'AC') return `${el.acValue ?? 5}A ∠${el.phaseDeg ?? 0}°`;
+      if (el.waveform === 'MIXED') {
+        const dc = el.mixedDcValue ?? el.dcValue ?? 0;
+        const freqs = (el.harmonics ?? []).filter((h) => Math.abs(h.amplitude) > 0).map((h) => h.freqHz);
+        if (freqs.length === 0) return `${dc} A`;
+        const freqText = `${freqs.slice(0, 2).join('/')}${freqs.length > 2 ? '…' : ''}Hz`;
+        return `${dc}A + ${freqText}`;
+      }
       if (el.waveform === 'STEP') return `Step ${el.stepInit ?? 0}→${el.stepFinal ?? 2}A`;
       return `${el.dcValue ?? 2} A`;
+    }
     case 'RESISTOR':
       return formatEngValue(el.resistance ?? 100, 'Ω');
     case 'CAPACITOR':

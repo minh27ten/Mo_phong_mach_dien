@@ -251,15 +251,34 @@ export default function App() {
           throw new Error('Cấu trúc tệp JSON không hợp lệ.');
         }
         const validElements = rawCircuit.elements.every(
-          (el: unknown) =>
-            Boolean(el) &&
-            typeof el === 'object' &&
-            typeof (el as CircuitElement).id === 'string' &&
-            typeof (el as CircuitElement).name === 'string' &&
-            isValidComponentType((el as CircuitElement).type) &&
-            Number.isFinite((el as CircuitElement).x) &&
-            Number.isFinite((el as CircuitElement).y) &&
-            [0, 90, 180, 270].includes((el as CircuitElement).rotation),
+          (el: unknown) => {
+            if (!el || typeof el !== 'object') return false;
+            const c = el as CircuitElement;
+            const validWf =
+              c.waveform === undefined || ['DC', 'AC', 'STEP', 'MIXED'].includes(c.waveform);
+            const validHarmonics =
+              c.harmonics === undefined ||
+              (Array.isArray(c.harmonics) &&
+                c.harmonics.every(
+                  (h) =>
+                    Boolean(h) &&
+                    typeof h === 'object' &&
+                    typeof h.id === 'string' &&
+                    Number.isFinite(h.freqHz) &&
+                    Number.isFinite(h.amplitude) &&
+                    Number.isFinite(h.phaseDeg),
+                ));
+            return (
+              typeof c.id === 'string' &&
+              typeof c.name === 'string' &&
+              isValidComponentType(c.type) &&
+              Number.isFinite(c.x) &&
+              Number.isFinite(c.y) &&
+              [0, 90, 180, 270].includes(c.rotation) &&
+              validWf &&
+              validHarmonics
+            );
+          },
         );
         const validWires = rawCircuit.wires.every(
           (w: unknown) =>

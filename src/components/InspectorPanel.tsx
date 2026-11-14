@@ -4,6 +4,7 @@ import {
   Calculator,
   CheckCircle2,
   GitBranch,
+  Plus,
   RotateCw,
   Sliders,
   Table2,
@@ -13,14 +14,21 @@ import {
   CircuitElement,
   CircuitState,
   ComplexInput,
+  HarmonicComponent,
   SimulationResult,
+  SourceHarmonic,
   TheveninNortonResult,
   TwoPortExtractResult,
   Wire,
 } from '../types/circuit';
 import { Complex } from '../engine/complex';
 import { getComponentMeta } from '../engine/pins';
-import { extractTheveninNorton, extractTwoPort } from '../engine/mna';
+import {
+  extractTheveninNorton,
+  extractTwoPort,
+  getSourceComponents,
+  getSourceHarmonicSummary,
+} from '../engine/mna';
 import { DraftNumInput } from './DraftNumInput';
 import { TransientPlot } from './TransientPlot';
 
@@ -166,6 +174,29 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const [tp2Neg, setTp2Neg] = useState<string>('0');
   const [thResult, setThResult] = useState<TheveninNortonResult | null>(null);
   const [tpResult, setTpResult] = useState<TwoPortExtractResult | null>(null);
+  const [resultInspectTarget, setResultInspectTarget] = useState<
+    { kind: 'NODE' | 'ELEMENT'; id: string } | null
+  >(null);
+
+  const activeFrequencies = useMemo(() => {
+    const freqs = new Set<number>();
+    if (simulationResult?.frequenciesHz?.length) {
+      for (const f of simulationResult.frequenciesHz) freqs.add(f);
+    } else {
+      for (const el of circuit.elements) {
+        if (el.type === 'V_SRC' || el.type === 'I_SRC') {
+          for (const c of getSourceComponents(el)) {
+            if (c.phasorRms.mag() > 1e-12) freqs.add(c.freqHz);
+          }
+        } else if (el.type === 'ONE_PORT' && (el.onePortMag ?? 0) !== 0) {
+          freqs.add(Math.max(0, el.onePortFreqHz ?? 50));
+        } else if (el.type === 'THREE_PHASE_SRC') {
+          freqs.add(Math.max(0, el.tpFreqHz ?? 50));
+        }
+      }
+    }
+    return Array.from(freqs).sort((a, b) => a - b);
+  }, [simulationResult, circuit.elements]);
 
   const inductors = useMemo(
     () => circuit.elements.filter((e) => e.type === 'INDUCTOR'),
@@ -247,90 +278,240 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           </div>
         </div>
 
-        {(el.type === 'V_SRC' || el.type === 'I_SRC') && (
-          <div className="space-y-3 p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">
-            <SegmentedField
-              label="Dạng sóng nguồn"
-              value={el.waveform ?? 'DC'}
-              options={[
-                { value: 'DC', label: 'DC' },
-                { value: 'AC', label: 'AC Sin' },
-                { value: 'STEP', label: 'Step' },
-              ]}
-              onChange={(wf) => update({ waveform: wf })}
-            />
+        {(el.type === 'V_SRC' || el.type === 'I_SRC') && (() => {
+          const unit = el.type === 'V_SRC' ? 'V' : 'A';
+          const harmonics = el.harmonics ?? [];
+          const mixedSummary = el.waveform === 'MIXED' ? getSourceHarmonicSummary(el) : null;
+          const handleWaveformChange = (wf: 'DC' | 'AC' | 'STEP' | 'MIXED') => {
+            if (wf === 'MIXED' && (!el.harmonics || el.harmonics.length === 0)) {
+              const fallbackAmp = el.acValue ?? (el.type === 'V_SRC' ? 220 : 5);
+              update({
+                waveform: 'MIXED',
+                mixedDcValue: el.mixedDcValue ?? el.dcValue ?? 12,
+                harmonics: [
+                  {
+                    id: 'h1',
+                    freqHz: el.freqHz ?? 50,
+                    amplitude: fallbackAmp,
+                    phaseDeg: el.phaseDeg ?? 0,
+                  },
+                ],
+              });
+              return;
+            }
+            if (wf === 'MIXED' && el.mixedDcValue === undefined) {
+              update({ waveform: 'MIXED', mixedDcValue: el.dcValue ?? 12 });
+              return;
+            }
+            update({ waveform: wf });
+          };
+          const updateHarmonic = (idx: number, patch: Partial<SourceHarmonic>) => {
+            const next = harmonics.map((h, i) => (i === idx ? { ...h, ...patch } : h));
+            update({ harmonics: next });
+          };
+          const addHarmonic = () => {
+            const maxF = harmonics.reduce((m, h) => Math.max(m, h.freqHz ?? 0), 0);
+            const nextFreq = maxF > 0 ? maxF + 100 : 50;
+            const next: SourceHarmonic = {
+              id: `h_${Date.now()}_${harmonics.length + 1}`,
+              freqHz: nextFreq,
+              amplitude: el.type === 'V_SRC' ? 40 : 1,
+              phaseDeg: 0,
+            };
+            update({ harmonics: [...harmonics, next] });
+          };
+          const removeHarmonic = (idx: number) => {
+            update({ harmonics: harmonics.filter((_, i) => i !== idx) });
+          };
 
-            {(el.waveform ?? 'DC') === 'DC' && (
-              <NumField
-                label="Giá trị một chiều"
-                unit={el.type === 'V_SRC' ? 'V' : 'A'}
-                value={el.dcValue ?? 12}
-                onChange={(v) => update({ dcValue: v })}
+          return (
+            <div className="space-y-3 p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">
+              <SegmentedField
+                label="Dạng sóng nguồn"
+                value={el.waveform ?? 'DC'}
+                options={[
+                  { value: 'DC', label: 'DC' },
+                  { value: 'AC', label: 'AC Sin' },
+                  { value: 'MIXED', label: 'Hỗn hợp' },
+                  { value: 'STEP', label: 'Step' },
+                ]}
+                onChange={handleWaveformChange}
               />
-            )}
 
-            {el.waveform === 'AC' && (
-              <>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <NumField
-                    label={el.amplitudeType === 'PEAK' ? 'Biên độ đỉnh' : 'Hiệu dụng'}
-                    unit={el.type === 'V_SRC' ? 'V' : 'A'}
-                    value={el.acValue ?? 220}
-                    onChange={(v) => update({ acValue: v })}
-                  />
-                  <SegmentedField
-                    label="Kiểu biên độ"
-                    value={el.amplitudeType ?? 'RMS'}
-                    options={[
-                      { value: 'RMS', label: 'RMS' },
-                      { value: 'PEAK', label: 'Đỉnh' },
-                    ]}
-                    onChange={(at) => update({ amplitudeType: at })}
-                  />
+              {(el.waveform ?? 'DC') === 'DC' && (
+                <NumField
+                  label="Giá trị một chiều"
+                  unit={unit}
+                  value={el.dcValue ?? 12}
+                  onChange={(v) => update({ dcValue: v })}
+                />
+              )}
+
+              {el.waveform === 'AC' && (
+                <>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <NumField
+                      label={el.amplitudeType === 'PEAK' ? 'Biên độ đỉnh' : 'Hiệu dụng'}
+                      unit={unit}
+                      value={el.acValue ?? 220}
+                      onChange={(v) => update({ acValue: v })}
+                    />
+                    <SegmentedField
+                      label="Kiểu biên độ"
+                      value={el.amplitudeType ?? 'RMS'}
+                      options={[
+                        { value: 'RMS', label: 'RMS' },
+                        { value: 'PEAK', label: 'Đỉnh' },
+                      ]}
+                      onChange={(at) => update({ amplitudeType: at })}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <NumField
+                      label="Tần số"
+                      unit="Hz"
+                      min={0}
+                      value={el.freqHz ?? 50}
+                      onChange={(v) => update({ freqHz: Math.max(0, v) })}
+                    />
+                    <NumField
+                      label="Góc pha đầu"
+                      unit="°"
+                      value={el.phaseDeg ?? 0}
+                      onChange={(v) => update({ phaseDeg: v })}
+                    />
+                  </div>
+                </>
+              )}
+
+              {el.waveform === 'MIXED' && (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <NumField
+                      label="Thành phần DC"
+                      unit={unit}
+                      value={el.mixedDcValue ?? el.dcValue ?? 0}
+                      onChange={(v) => update({ mixedDcValue: v })}
+                    />
+                    <SegmentedField
+                      label="Kiểu biên độ AC"
+                      value={el.amplitudeType ?? 'RMS'}
+                      options={[
+                        { value: 'RMS', label: 'RMS' },
+                        { value: 'PEAK', label: 'Đỉnh' },
+                      ]}
+                      onChange={(at) => update({ amplitudeType: at })}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-medium text-slate-600">
+                        Các sóng hài / tần số ({harmonics.length})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={addHarmonic}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 rounded-md transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Thêm hài
+                      </button>
+                    </div>
+
+                    {harmonics.length === 0 ? (
+                      <div className="text-[11px] text-slate-400 bg-white border border-dashed border-slate-200 rounded-lg px-2.5 py-2 text-center">
+                        Chưa có thành phần xoay chiều (chỉ còn DC).
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="grid grid-cols-[1fr_1fr_0.85fr_24px] gap-1.5 px-1 text-[10px] font-medium text-slate-500">
+                          <span>f (Hz)</span>
+                          <span>{el.amplitudeType === 'PEAK' ? `Đỉnh (${unit})` : `RMS (${unit})`}</span>
+                          <span>Pha (°)</span>
+                          <span />
+                        </div>
+                        {harmonics.map((h, idx) => (
+                          <div
+                            key={h.id}
+                            className="grid grid-cols-[1fr_1fr_0.85fr_24px] gap-1.5 items-center"
+                          >
+                            <DraftNumInput
+                              ariaLabel={`Hài ${idx + 1} tần số`}
+                              value={h.freqHz}
+                              min={0}
+                              onChange={(v) => updateHarmonic(idx, { freqHz: Math.max(0, v) })}
+                              className="min-w-0 w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                            />
+                            <DraftNumInput
+                              ariaLabel={`Hài ${idx + 1} biên độ`}
+                              value={h.amplitude}
+                              onChange={(v) => updateHarmonic(idx, { amplitude: v })}
+                              className="min-w-0 w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                            />
+                            <DraftNumInput
+                              ariaLabel={`Hài ${idx + 1} pha`}
+                              value={h.phaseDeg}
+                              onChange={(v) => updateHarmonic(idx, { phaseDeg: v })}
+                              className="min-w-0 w-full px-2 py-1 text-xs font-mono tabular-nums bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeHarmonic(idx)}
+                              title="Xoá sóng hài này"
+                              aria-label={`Xoá sóng hài ${idx + 1}`}
+                              className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {mixedSummary && (
+                    <div className="rounded-lg bg-white border border-slate-200/80 px-2.5 py-2 space-y-1">
+                      <div className="flex items-center justify-between text-[10px] text-slate-500">
+                        <span>Biểu thức tổng hợp</span>
+                        <span className="font-mono font-semibold text-blue-700">
+                          Tổng RMS = {mixedSummary.totalRms.toFixed(3)} {unit}
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-800 break-words">
+                        {el.type === 'V_SRC' ? 'u(t)' : 'i(t)'} = {mixedSummary.instantaneous}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
+              )}
+
+              {el.waveform === 'STEP' && (
+                <div className="grid grid-cols-3 gap-2">
                   <NumField
-                    label="Tần số"
-                    unit="Hz"
+                    label="Trước đóng"
+                    unit={unit}
+                    value={el.stepInit ?? 0}
+                    onChange={(v) => update({ stepInit: v })}
+                  />
+                  <NumField
+                    label="Sau đóng"
+                    unit={unit}
+                    value={el.stepFinal ?? 12}
+                    onChange={(v) => update({ stepFinal: v })}
+                  />
+                  <NumField
+                    label="Thời điểm"
+                    unit="s"
                     min={0}
-                    value={el.freqHz ?? 50}
-                    onChange={(v) => update({ freqHz: Math.max(0, v) })}
-                  />
-                  <NumField
-                    label="Góc pha đầu"
-                    unit="°"
-                    value={el.phaseDeg ?? 0}
-                    onChange={(v) => update({ phaseDeg: v })}
+                    value={el.stepTime ?? 0}
+                    onChange={(v) => update({ stepTime: Math.max(0, v) })}
                   />
                 </div>
-              </>
-            )}
-
-            {el.waveform === 'STEP' && (
-              <div className="grid grid-cols-3 gap-2">
-                <NumField
-                  label="Trước đóng"
-                  unit={el.type === 'V_SRC' ? 'V' : 'A'}
-                  value={el.stepInit ?? 0}
-                  onChange={(v) => update({ stepInit: v })}
-                />
-                <NumField
-                  label="Sau đóng"
-                  unit={el.type === 'V_SRC' ? 'V' : 'A'}
-                  value={el.stepFinal ?? 12}
-                  onChange={(v) => update({ stepFinal: v })}
-                />
-                <NumField
-                  label="Thời điểm"
-                  unit="s"
-                  min={0}
-                  value={el.stepTime ?? 0}
-                  onChange={(v) => update({ stepTime: Math.max(0, v) })}
-                />
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          );
+        })()}
 
         {el.type === 'RESISTOR' && (
           <div className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">
@@ -836,8 +1017,54 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   <p key={i}>{d.text}</p>
                 ))}
               </div>
-            ) : (
+            ) : (() => {
+              const inspectedNode =
+                resultInspectTarget?.kind === 'NODE'
+                  ? simulationResult.nodes.find((n) => n.nodeId === resultInspectTarget.id)
+                  : undefined;
+              const inspectedElement =
+                inspectedNode
+                  ? undefined
+                  : (resultInspectTarget?.kind === 'ELEMENT'
+                      ? simulationResult.elements.find((e) => e.elementId === resultInspectTarget.id)
+                      : undefined) ??
+                    (selectedElement
+                      ? simulationResult.elements.find((e) => e.elementId === selectedElement.id)
+                      : undefined) ??
+                    simulationResult.elements[0];
+
+              const freqRows = Array.from(
+                new Set([
+                  ...(simulationResult.frequenciesHz ?? []),
+                  ...(inspectedElement?.voltageHarmonics?.map((h) => h.freqHz) ?? []),
+                  ...(inspectedElement?.currentHarmonics?.map((h) => h.freqHz) ?? []),
+                ]),
+              )
+                .filter((f) => f > 0)
+                .sort((a, b) => a - b);
+
+              return (
               <>
+                {simulationResult.mode === 'AC' &&
+                  (simulationResult.frequenciesHz?.length ?? 0) > 1 && (
+                    <div className="rounded-xl bg-indigo-50/70 border border-indigo-200/80 px-3 py-2 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-indigo-800">
+                        <span>Xếp chồng đa tần số</span>
+                        <span>{simulationResult.frequenciesHz!.length} thành phần</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {simulationResult.frequenciesHz!.map((f) => (
+                          <span
+                            key={f}
+                            className="px-1.5 py-0.5 text-[10px] font-mono bg-white text-indigo-700 border border-indigo-200/80 rounded-md"
+                          >
+                            {f === 0 ? '0 Hz (DC)' : `${f} Hz`}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                 {simulationResult.powerBalance && (
                   <div className="rounded-xl bg-slate-50/80 border border-slate-200/80 p-3 space-y-2">
                     <div className="flex items-center justify-between">
@@ -879,37 +1106,49 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
                 {/* Bảng điện áp nút */}
                 <div>
-                  <h3 className="text-xs font-semibold text-slate-800 mb-1.5">
-                    Điện thế các nút
-                  </h3>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <h3 className="text-xs font-semibold text-slate-800">
+                      Điện thế các nút
+                    </h3>
+                    <span className="text-[10px] text-slate-400">Nhấp dòng để xem phổ hài</span>
+                  </div>
                   <div className="border border-slate-200/90 rounded-xl overflow-hidden bg-white">
                     <table className="w-full text-[11px]">
                       <thead className="bg-slate-50/90 border-b border-slate-200 text-slate-500">
                         <tr>
                           <th className="py-2 px-2.5 text-left font-medium">Nút</th>
                           <th className="py-2 px-2.5 text-right font-medium">
-                            {simulationResult.singleFrequencyHz ? 'Phức (RMS ∠ °)' : 'Giá trị (V)'}
+                            {simulationResult.singleFrequencyHz ? 'Phức (RMS ∠ °)' : 'Hiệu dụng / DC'}
                           </th>
                           <th className="py-2 px-2.5 text-right font-medium">Biểu thức tức thời</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-mono tabular-nums">
-                        {simulationResult.nodes.map((n) => (
-                          <tr key={n.nodeId} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="py-1.5 px-2.5 font-semibold text-slate-800">N{n.nodeId}</td>
-                            <td className="py-1.5 px-2.5 text-right text-slate-800">
-                              {simulationResult.singleFrequencyHz && n.phasorMag !== undefined
-                                ? `${n.phasorMag.toFixed(2)} ∠ ${n.phasorDeg?.toFixed(1)}°`
-                                : `${(simulationResult.mode === 'AC' ? n.rms : n.dc).toFixed(3)} V`}
-                            </td>
-                            <td
-                              className="py-1.5 px-2.5 text-right text-slate-500 truncate max-w-[136px]"
-                              title={n.instantaneous}
+                        {simulationResult.nodes.map((n) => {
+                          const isNodeInspected = inspectedNode?.nodeId === n.nodeId;
+                          return (
+                            <tr
+                              key={n.nodeId}
+                              onClick={() => setResultInspectTarget({ kind: 'NODE', id: n.nodeId })}
+                              className={`cursor-pointer transition-colors ${
+                                isNodeInspected ? 'bg-indigo-50/70' : 'hover:bg-slate-50/80'
+                              }`}
                             >
-                              {n.instantaneous}
-                            </td>
-                          </tr>
-                        ))}
+                              <td className="py-1.5 px-2.5 font-semibold text-slate-800">N{n.nodeId}</td>
+                              <td className="py-1.5 px-2.5 text-right text-slate-800">
+                                {simulationResult.singleFrequencyHz && n.phasorMag !== undefined
+                                  ? `${n.phasorMag.toFixed(2)} ∠ ${n.phasorDeg?.toFixed(1)}°`
+                                  : `${(simulationResult.mode === 'AC' ? n.rms : n.dc).toFixed(3)} V`}
+                              </td>
+                              <td
+                                className="py-1.5 px-2.5 text-right text-slate-500 truncate max-w-[136px]"
+                                title={n.instantaneous}
+                              >
+                                {n.instantaneous}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -938,14 +1177,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-mono tabular-nums">
                         {simulationResult.elements.map((e) => {
-                          const isRowSelected = selectedElement?.id === e.elementId;
+                          const isRowSelected =
+                            inspectedElement?.elementId === e.elementId ||
+                            selectedElement?.id === e.elementId;
                           return (
                             <React.Fragment key={e.elementId}>
                               <tr
-                                onClick={() => onSelectElement?.(e.elementId)}
-                                className={`transition-colors ${
-                                  onSelectElement ? 'cursor-pointer' : ''
-                                } ${
+                                onClick={() => {
+                                  setResultInspectTarget({ kind: 'ELEMENT', id: e.elementId });
+                                  onSelectElement?.(e.elementId);
+                                }}
+                                className={`transition-colors cursor-pointer ${
                                   isRowSelected ? 'bg-blue-50/70' : 'hover:bg-slate-50/80'
                                 }`}
                               >
@@ -996,8 +1238,151 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     Quy ước thụ động: P &gt; 0 là tiêu thụ, P &lt; 0 là phát công suất.
                   </p>
                 </div>
+
+                {/* Chi tiết phổ hài & biểu thức tức thời đầy đủ */}
+                {(inspectedNode || inspectedElement) && (
+                  <div className="rounded-xl bg-slate-50/80 border border-slate-200/90 p-3 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                        {inspectedNode
+                          ? `Phổ hài & Tức thời · Nút N${inspectedNode.nodeId}`
+                          : `Phổ hài & Tức thời · ${inspectedElement!.name}`}
+                      </h4>
+                    </div>
+
+                    {inspectedNode ? (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 text-[11px] font-mono tabular-nums">
+                          <div className="bg-white rounded-lg border border-slate-200/80 px-2.5 py-1.5">
+                            <span className="block text-[10px] font-sans text-slate-500">Thành phần DC</span>
+                            <span className="font-semibold text-slate-800">
+                              {inspectedNode.dc.toFixed(3)} V
+                            </span>
+                          </div>
+                          <div className="bg-white rounded-lg border border-slate-200/80 px-2.5 py-1.5">
+                            <span className="block text-[10px] font-sans text-slate-500">Tổng RMS</span>
+                            <span className="font-semibold text-blue-700">
+                              {inspectedNode.rms.toFixed(3)} V
+                            </span>
+                          </div>
+                        </div>
+                        <div className="bg-white rounded-lg border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-mono text-slate-800 break-words">
+                          v(t) = {inspectedNode.instantaneous}
+                        </div>
+                        {inspectedNode.harmonics.length > 0 && (
+                          <div className="border border-slate-200/80 rounded-lg overflow-hidden bg-white">
+                            <table className="w-full text-[10px] font-mono tabular-nums">
+                              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-sans">
+                                <tr>
+                                  <th className="py-1 px-2 text-left font-medium">f (Hz)</th>
+                                  <th className="py-1 px-2 text-right font-medium">RMS (V)</th>
+                                  <th className="py-1 px-2 text-right font-medium">Đỉnh (V)</th>
+                                  <th className="py-1 px-2 text-right font-medium">Pha (°)</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {inspectedNode.harmonics.map((h: HarmonicComponent) => (
+                                  <tr key={h.freqHz}>
+                                    <td className="py-1 px-2 text-slate-700">{h.freqHz}</td>
+                                    <td className="py-1 px-2 text-right text-slate-800">{h.rms.toFixed(3)}</td>
+                                    <td className="py-1 px-2 text-right text-slate-600">{h.peak.toFixed(3)}</td>
+                                    <td className="py-1 px-2 text-right text-slate-600">{h.phaseDeg.toFixed(1)}°</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </>
+                    ) : inspectedElement ? (
+                      <>
+                        <div className="grid grid-cols-3 gap-1.5 text-[11px] font-mono tabular-nums">
+                          <div className="bg-white rounded-lg border border-slate-200/80 px-2 py-1.5">
+                            <span className="block text-[10px] font-sans text-slate-500">U_rms / I_rms</span>
+                            <span className="font-semibold text-slate-800">
+                              {inspectedElement.voltageRms.toFixed(2)}V / {inspectedElement.currentRms.toFixed(3)}A
+                            </span>
+                          </div>
+                          <div className="bg-white rounded-lg border border-slate-200/80 px-2 py-1.5">
+                            <span className="block text-[10px] font-sans text-slate-500">U_dc / I_dc</span>
+                            <span className="font-semibold text-slate-700">
+                              {inspectedElement.voltageDc.toFixed(2)}V / {inspectedElement.currentDc.toFixed(3)}A
+                            </span>
+                          </div>
+                          <div className="bg-white rounded-lg border border-slate-200/80 px-2 py-1.5">
+                            <span className="block text-[10px] font-sans text-slate-500">S (VA) · PF</span>
+                            <span className="font-semibold text-blue-700">
+                              {inspectedElement.sVA.toFixed(2)} ·{' '}
+                              {inspectedElement.sVA > 1e-9
+                                ? (Math.abs(inspectedElement.pWatts) / inspectedElement.sVA).toFixed(3)
+                                : '—'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          {inspectedElement.instantaneousVoltage && (
+                            <div className="bg-white rounded-lg border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-mono text-slate-800 break-words">
+                              u(t) = {inspectedElement.instantaneousVoltage}
+                            </div>
+                          )}
+                          <div className="bg-white rounded-lg border border-slate-200/80 px-2.5 py-1.5 text-[11px] font-mono text-slate-800 break-words">
+                            i(t) = {inspectedElement.instantaneousCurrent}
+                          </div>
+                        </div>
+                        {freqRows.length > 0 && (
+                          <div className="border border-slate-200/80 rounded-lg overflow-hidden bg-white">
+                            <table className="w-full text-[10px] font-mono tabular-nums">
+                              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-sans">
+                                <tr>
+                                  <th className="py-1 px-2 text-left font-medium">Tần số</th>
+                                  <th className="py-1 px-2 text-right font-medium">U (RMS ∠ °)</th>
+                                  <th className="py-1 px-2 text-right font-medium">I (RMS ∠ °)</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {(simulationResult.frequenciesHz?.includes(0) ||
+                                  Math.abs(inspectedElement.voltageDc) > 1e-6 ||
+                                  Math.abs(inspectedElement.currentDc) > 1e-6) && (
+                                  <tr>
+                                    <td className="py-1 px-2 text-slate-700">0 Hz (DC)</td>
+                                    <td className="py-1 px-2 text-right text-slate-800">
+                                      {inspectedElement.voltageDc.toFixed(3)} V
+                                    </td>
+                                    <td className="py-1 px-2 text-right text-slate-800">
+                                      {inspectedElement.currentDc.toFixed(4)} A
+                                    </td>
+                                  </tr>
+                                )}
+                                {freqRows.map((f) => {
+                                  const uh = inspectedElement.voltageHarmonics?.find(
+                                    (h) => Math.abs(h.freqHz - f) < 1e-6,
+                                  );
+                                  const ih = inspectedElement.currentHarmonics?.find(
+                                    (h) => Math.abs(h.freqHz - f) < 1e-6,
+                                  );
+                                  return (
+                                    <tr key={f}>
+                                      <td className="py-1 px-2 text-slate-700">{f} Hz</td>
+                                      <td className="py-1 px-2 text-right text-slate-800">
+                                        {uh ? `${uh.rms.toFixed(2)} ∠ ${uh.phaseDeg.toFixed(1)}°` : '—'}
+                                      </td>
+                                      <td className="py-1 px-2 text-right text-slate-800">
+                                        {ih ? `${ih.rms.toFixed(3)} ∠ ${ih.phaseDeg.toFixed(1)}°` : '—'}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                )}
               </>
-            )}
+              );
+            })()}
           </div>
         )}
 
@@ -1051,13 +1436,34 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               </button>
             </div>
 
-            <NumField
-              label="Tần số trích xuất (0 Hz = DC)"
-              unit="Hz"
-              min={0}
-              value={eqFreq}
-              onChange={(v) => setEqFreq(Math.max(0, v))}
-            />
+            <div className="space-y-1.5">
+              <NumField
+                label="Tần số trích xuất (0 Hz = DC)"
+                unit="Hz"
+                min={0}
+                value={eqFreq}
+                onChange={(v) => setEqFreq(Math.max(0, v))}
+              />
+              {activeFrequencies.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="text-[10px] text-slate-400 mr-0.5">Tần số trong mạch:</span>
+                  {activeFrequencies.map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setEqFreq(f)}
+                      className={`px-1.5 py-0.5 text-[10px] font-mono rounded-md border transition-colors ${
+                        Math.abs(eqFreq - f) < 1e-6
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-blue-300'
+                      }`}
+                    >
+                      {f === 0 ? '0 Hz (DC)' : `${f} Hz`}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {eqMode === 'ONE_PORT' ? (
               <div className="grid grid-cols-2 gap-2.5">

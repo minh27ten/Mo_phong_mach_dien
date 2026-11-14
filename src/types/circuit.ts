@@ -19,9 +19,16 @@ export type ComponentType =
 
 export type SimulationMode = 'DC' | 'DC_SS' | 'AC' | 'TRANSIENT';
 
-export type SourceWaveform = 'DC' | 'AC' | 'STEP';
+export type SourceWaveform = 'DC' | 'AC' | 'STEP' | 'MIXED';
 
 export type AmplitudeType = 'RMS' | 'PEAK';
+
+export interface SourceHarmonic {
+  id: string;
+  freqHz: number;
+  amplitude: number;
+  phaseDeg: number;
+}
 
 export type ComplexInput = {
   re: number;
@@ -47,6 +54,8 @@ export interface CircuitElement {
   waveform?: SourceWaveform;
   dcValue?: number;
   acValue?: number;
+  mixedDcValue?: number;
+  harmonics?: SourceHarmonic[];
   amplitudeType?: AmplitudeType;
   phaseDeg?: number;
   freqHz?: number;
@@ -132,6 +141,13 @@ export interface DiagnosticMessage {
   text: string;
 }
 
+export interface HarmonicComponent {
+  freqHz: number;
+  rms: number;
+  peak: number;
+  phaseDeg: number;
+}
+
 export interface NodeVoltageResult {
   nodeId: string;
   dc: number;
@@ -139,7 +155,7 @@ export interface NodeVoltageResult {
   phasorMag?: number; // RMS nếu đơn tần số
   phasorDeg?: number;
   instantaneous: string;
-  harmonics: Array<{ freqHz: number; rms: number; peak: number; phaseDeg: number }>;
+  harmonics: HarmonicComponent[];
 }
 
 export interface ElementBranchResult {
@@ -158,6 +174,9 @@ export interface ElementBranchResult {
   qVars: number;
   sVA: number;
   instantaneousCurrent: string;
+  instantaneousVoltage?: string;
+  voltageHarmonics?: HarmonicComponent[];
+  currentHarmonics?: HarmonicComponent[];
   // Thông tin bổ sung cho phần tử 3 pha
   threePhaseDetails?: {
     iaMag: number;
@@ -190,6 +209,7 @@ export interface SimulationResult {
   allNodeIds: string[];
   autoGroundUsed: boolean;
   singleFrequencyHz?: number | null; // khác null nếu AC chỉ có 1 tần số > 0
+  frequenciesHz?: number[];
   nodes: NodeVoltageResult[];
   elements: ElementBranchResult[];
   transient?: TransientSeries;
