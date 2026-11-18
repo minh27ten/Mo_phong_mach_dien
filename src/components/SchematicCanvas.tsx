@@ -18,7 +18,14 @@ import {
   Wire,
   WirePoint,
 } from '../types/circuit';
-import { getElementWorldPins, GRID_SIZE, hasVerticalPins, snapToGrid, WorldPin } from '../engine/pins';
+import {
+  getElementWorldPins,
+  getMutualDotPins,
+  GRID_SIZE,
+  hasVerticalPins,
+  snapToGrid,
+  WorldPin,
+} from '../engine/pins';
 import { buildNetlist, NetlistGraph } from '../engine/netlist';
 import { ComponentSymbol, getElementSummaryText } from './ComponentSymbol';
 
@@ -157,14 +164,21 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     return { pinsByElementId: map, worldPins: flat };
   }, [elements]);
 
-  // Hỗ cảm: xác định cuộn dây nào có chấm cực tính •
+  // Hỗ cảm: xác định cuộn dây / tổng trở Z nào có chấm cực tính •
   const inductorDots = useMemo(() => {
     const map = new Map<string, { pin1: boolean; pin2: boolean }>();
+    const addDot = (id: string, pin: 1 | 2) => {
+      const cur = map.get(id) ?? { pin1: false, pin2: false };
+      map.set(id, {
+        pin1: cur.pin1 || pin === 1,
+        pin2: cur.pin2 || pin === 2,
+      });
+    };
     for (const el of elements) {
-      if (el.type === 'MUTUAL' && el.l1Id && el.l2Id) {
-        map.set(el.l1Id, { pin1: true, pin2: false });
-        const pol = el.dotPolarity ?? 1;
-        map.set(el.l2Id, { pin1: pol === 1, pin2: pol === -1 });
+      if (el.type === 'MUTUAL' && el.l1Id && el.l2Id && el.l1Id !== el.l2Id) {
+        const { pin1, pin2 } = getMutualDotPins(el);
+        addDot(el.l1Id, pin1);
+        addDot(el.l2Id, pin2);
       }
     }
     return map;
@@ -595,19 +609,29 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         <rect width="100%" height="100%" fill="url(#circuit-grid)" />
 
         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
-          {/* Đường liên kết hỗ cảm M */}
+          {/* Đường liên kết hỗ cảm M / Z_M */}
           {elements
             .filter((el) => el.type === 'MUTUAL' && el.l1Id && el.l2Id)
             .map((m) => {
               const l1 = elements.find((e) => e.id === m.l1Id);
               const l2 = elements.find((e) => e.id === m.l2Id);
               if (!l1 || !l2) return null;
-              const mx = (l1.x + l2.x) / 2;
-              const my = Math.min(l1.y, l2.y) - 34;
+              const isStackedVertically =
+                Math.abs(l1.x - l2.x) < 36 && Math.abs(l1.y - l2.y) >= 36;
+              let d: string;
+              if (isStackedVertically) {
+                const avgX = (l1.x + l2.x) / 2;
+                const dir = m.x <= avgX ? -1 : 1;
+                d = `M ${l1.x + dir * 14} ${l1.y} Q ${avgX + dir * 48} ${(l1.y + l2.y) / 2} ${l2.x + dir * 14} ${l2.y}`;
+              } else {
+                const mx = (l1.x + l2.x) / 2;
+                const my = Math.min(l1.y, l2.y) - 34;
+                d = `M ${l1.x} ${l1.y - 12} Q ${mx} ${my} ${l2.x} ${l2.y - 12}`;
+              }
               return (
                 <path
                   key={`arc-${m.id}`}
-                  d={`M ${l1.x} ${l1.y - 12} Q ${mx} ${my} ${l2.x} ${l2.y - 12}`}
+                  d={d}
                   fill="none"
                   stroke="#D97706"
                   strokeWidth={1.4}
@@ -788,7 +812,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                         fill="#475569"
                         className="font-mono"
                       >
-                        {getElementSummaryText(el)}
+                        {getElementSummaryText(el, elements)}
                       </text>
                     </g>
                   ) : (
@@ -812,7 +836,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                         fill="#475569"
                         className="font-mono"
                       >
-                        {getElementSummaryText(el)}
+                        {getElementSummaryText(el, elements)}
                       </text>
                     </g>
                   ))}

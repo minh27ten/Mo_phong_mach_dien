@@ -1,7 +1,7 @@
 import React from 'react';
-import { CircuitElement, ComponentType } from '../types/circuit';
+import { CircuitElement, ComplexInput, ComponentType } from '../types/circuit';
 import { Complex } from '../engine/complex';
-import { formatEngValue, getLocalPins } from '../engine/pins';
+import { formatEngValue, getLocalPins, getMutualValueMode } from '../engine/pins';
 
 interface SymbolProps {
   type: ComponentType;
@@ -138,6 +138,8 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             >
               Z
             </text>
+            {hasDotAtPin1 && <circle cx={-23} cy={-11} r={2.8} fill="#DC2626" stroke="none" />}
+            {hasDotAtPin2 && <circle cx={23} cy={-11} r={2.8} fill="#DC2626" stroke="none" />}
           </g>
         );
       }
@@ -164,7 +166,7 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
               stroke="none"
               className="font-mono"
             >
-              M
+              {element?.mutualValueMode === 'Z_OHM' ? 'Z_M' : 'M'}
             </text>
             <path d="M -14 7 Q 0 13 14 7" stroke="#D97706" strokeWidth={1.4} fill="none" />
             <polyline points="-10,10 -14,7 -10,5" stroke="#D97706" strokeWidth={1.2} />
@@ -360,7 +362,18 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
   return <g>{renderGlyph()}</g>;
 };
 
-export function getElementSummaryText(el: CircuitElement): string {
+function formatComplexOhms(value?: ComplexInput, fallbackRe = 40, fallbackIm = 30): string {
+  const z = new Complex(value?.re ?? fallbackRe, value?.im ?? fallbackIm);
+  const re = Math.abs(z.re) < 1e-11 ? 0 : z.re;
+  const im = Math.abs(z.im) < 1e-11 ? 0 : z.im;
+  if (re === 0 && im !== 0) {
+    const imStr = Math.abs(im).toFixed(3).replace(/\.?0+$/, '');
+    return `${im < 0 ? '-' : ''}j${imStr} Ω`;
+  }
+  return `${z.formatRect(3)} Ω`;
+}
+
+export function getElementSummaryText(el: CircuitElement, elements?: CircuitElement[]): string {
   switch (el.type) {
     case 'GND':
       return '0 V';
@@ -395,18 +408,15 @@ export function getElementSummaryText(el: CircuitElement): string {
       return formatEngValue(el.capacitance ?? 100e-6, 'F');
     case 'INDUCTOR':
       return formatEngValue(el.inductance ?? 0.1, 'H');
-    case 'IMPEDANCE': {
-      const z = new Complex(el.impedance?.re ?? 40, el.impedance?.im ?? 30);
-      const re = Math.abs(z.re) < 1e-11 ? 0 : z.re;
-      const im = Math.abs(z.im) < 1e-11 ? 0 : z.im;
-      if (re === 0 && im !== 0) {
-        const imStr = Math.abs(im).toFixed(3).replace(/\.?0+$/, '');
-        return `${im < 0 ? '-' : ''}j${imStr} Ω`;
+    case 'IMPEDANCE':
+      return formatComplexOhms(el.impedance, 40, 30);
+    case 'MUTUAL': {
+      const mMode = getMutualValueMode(el, elements);
+      if (mMode === 'Z_OHM') {
+        return `Z_M = ${formatComplexOhms(el.mutualZ, 0, 10)}`;
       }
-      return `${z.formatRect(3)} Ω`;
-    }
-    case 'MUTUAL':
       return `M = ${formatEngValue(el.mutualM ?? 0.05, 'H')}`;
+    }
     case 'VCVS':
       return `μ = ${el.gain ?? 2}`;
     case 'CCVS':

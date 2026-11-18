@@ -905,4 +905,188 @@ test('findMaxPowerImpedance: mạng nguồn không tổn hao (R_th = 0) & kiểm
   }
 });
 
+test('Hỗ cảm tổng trở (MUTUAL Z_OHM): mạch mẫu Hình 1 & quy đổi chấm cực (pin 1 / pin 2)', () => {
+  const preset = CIRCUIT_PRESETS.find((p) => p.id === 'coupled-impedances');
+  if (!preset) throw new Error('Thiếu mạch mẫu coupled-impedances');
+
+  const ac = runSimulation(preset.state, 'AC');
+  if (!ac.success) throw new Error('Giải AC mạch Hình 1 thất bại');
+  approx(ac.powerBalance!.pGenerated, 36.8463, 1e-3, 'Hình 1 P_gen');
+  approx(ac.powerBalance!.pConsumed, 36.8463, 1e-3, 'Hình 1 P_cons');
+
+  const nodeA = ac.nodes.find((n) => n.nodeId === '2')!;
+  approx(nodeA.phasorMag!, 3.015804, 1e-4, 'Hình 1 |Va|');
+  approx(nodeA.phasorDeg!, -150.415, 1e-2, 'Hình 1 arg(Va)');
+
+  const zl1 = ac.elements.find((e) => e.elementId === 'zl1')!;
+  const zl2 = ac.elements.find((e) => e.elementId === 'zl2')!;
+  const j3 = ac.elements.find((e) => e.elementId === 'j3')!;
+  approx(zl1.voltagePhasorMag!, 7.2297, 1e-4, 'Hình 1 |U1|');
+  approx(zl1.pWatts + zl2.pWatts, 0, 1e-6, 'Tổng P nhánh ghép hỗ cảm thuần kháng = 0');
+  approx(j3.currentPhasorMag!, 2.16891, 1e-4, 'Hình 1 |J3|');
+  approx(j3.pWatts, -19.907967, 1e-4, 'Hình 1 P(J3) (âm = phát 19.908 W)');
+  approx(j3.qVars, 11.079778, 1e-4, 'Hình 1 Q(J3)');
+
+  // Đảo đồng thời cả 2 chấm cực (1->2, 2->1): hiệu dấu hỗ cảm vẫn s = -1 nên kết quả giữ nguyên
+  const swappedDotsState: CircuitState = {
+    ...preset.state,
+    elements: preset.state.elements.map((e) =>
+      e.id === 'zm' ? { ...e, l1DotPin: 2, l2DotPin: 1, dotPolarity: -1 } : e,
+    ),
+  };
+  const acSwapped = runSimulation(swappedDotsState, 'AC');
+  if (!acSwapped.success) throw new Error('Swapped dots AC thất bại');
+  approx(acSwapped.elements.find((e) => e.elementId === 'j3')!.pWatts, -19.907967, 1e-4, 'Đảo kép chấm cực giữ nguyên kết quả');
+
+  // Đặt cùng cực (2-2 => s = +1): hệ vẫn bảo toàn công suất
+  const samePolState: CircuitState = {
+    ...preset.state,
+    elements: preset.state.elements.map((e) =>
+      e.id === 'zm' ? { ...e, l1DotPin: 2, l2DotPin: 2, dotPolarity: 1 } : e,
+    ),
+  };
+  const acSame = runSimulation(samePolState, 'AC');
+  if (!acSame.success) throw new Error('Same polarity AC thất bại');
+  approx(acSame.powerBalance!.pGenerated, acSame.powerBalance!.pConsumed, 1e-5, 'Bảo toàn công suất khi đổi cực');
+});
+
+test('Hỗ cảm tổng trở (MUTUAL Z_OHM & Z–L): giải tích 2 vòng, phức R_M+jX_M, DC, Transient & CCCS', () => {
+  const twoLoop: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 120, y: 200, rotation: 0, waveform: 'AC', acValue: 100, amplitudeType: 'RMS', phaseDeg: 0, freqHz: 50 },
+      { id: 'z1', name: 'Z1', type: 'IMPEDANCE', x: 220, y: 120, rotation: 0, impedance: { re: 10, im: 20 } },
+      { id: 'z2', name: 'Z2', type: 'IMPEDANCE', x: 340, y: 120, rotation: 0, impedance: { re: 15, im: 30 } },
+      { id: 'rl', name: 'RL', type: 'RESISTOR', x: 440, y: 200, rotation: 90, resistance: 25 },
+      { id: 'zm', name: 'ZM', type: 'MUTUAL', x: 280, y: 60, rotation: 0, l1Id: 'z1', l2Id: 'z2', l1DotPin: 1, l2DotPin: 1, dotPolarity: 1, mutualValueMode: 'Z_OHM', mutualZ: { re: 0, im: 10 } },
+      { id: 'f1', name: 'F1', type: 'CCCS', x: 540, y: 200, rotation: 0, gain: 0.5, ctrlElementId: 'z1' },
+      { id: 'rf', name: 'Rf', type: 'RESISTOR', x: 640, y: 200, rotation: 90, resistance: 20 },
+      { id: 'gnd1', name: 'GND', type: 'GND', x: 120, y: 300, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 120, y: 160 }, { x: 120, y: 120 }, { x: 180, y: 120 }] },
+      { id: 'w2', points: [{ x: 260, y: 120 }, { x: 260, y: 280 }, { x: 120, y: 280 }, { x: 120, y: 240 }] },
+      { id: 'w3', points: [{ x: 300, y: 120 }, { x: 300, y: 280 }, { x: 440, y: 280 }, { x: 440, y: 240 }] },
+      { id: 'w4', points: [{ x: 380, y: 120 }, { x: 440, y: 120 }, { x: 440, y: 160 }] },
+      { id: 'w5', points: [{ x: 540, y: 160 }, { x: 540, y: 120 }, { x: 640, y: 120 }, { x: 640, y: 160 }] },
+      { id: 'w6', points: [{ x: 540, y: 240 }, { x: 540, y: 280 }, { x: 640, y: 280 }, { x: 640, y: 240 }, { x: 640, y: 280 }] },
+      { id: 'w7', points: [{ x: 260, y: 280 }, { x: 300, y: 280 }] },
+      { id: 'w8', points: [{ x: 440, y: 280 }, { x: 540, y: 280 }] },
+    ],
+  };
+
+  // Kiểm chứng giải tích 2 vòng: Z11 = 10+j20, Z22 = 40+j30, Zm = j10
+  // det = (10+j20)(40+j30) - (j10)^2 = (400+j300+j800-600) - (-100) = -100 + j1100
+  const det = new Complex(-100, 1100);
+  const I1exp = new Complex(4000, 3000).div(det); // 100 * Z22 / det
+  const I2exp = new Complex(0, -1000).div(det); // -100 * Zm / det
+
+  const ac = runSimulation(twoLoop, 'AC');
+  if (!ac.success) throw new Error('2-loop coupled impedance AC thất bại');
+  const z1Res = ac.elements.find((e) => e.elementId === 'z1')!;
+  const z2Res = ac.elements.find((e) => e.elementId === 'z2')!;
+  const rfRes = ac.elements.find((e) => e.elementId === 'rf')!;
+  approx(z1Res.currentPhasorMag!, I1exp.mag(), 1e-4, '|I1| coupled Z');
+  approx(z1Res.currentPhasorDeg!, I1exp.deg(), 1e-2, 'arg(I1) coupled Z');
+  approx(z2Res.currentPhasorMag!, I2exp.mag(), 1e-4, '|I2| coupled Z');
+  approx(rfRes.currentPhasorMag!, 0.5 * I1exp.mag(), 1e-4, 'CCCS cảm biến đúng dòng Z1 có hỗ cảm');
+  approx(ac.powerBalance!.pGenerated, ac.powerBalance!.pConsumed, 1e-4, 'Bảo toàn công suất 2 vòng + CCCS');
+
+  // Kiểm chứng Quá độ (Transient) hội tụ về xác lập AC
+  const tr = runSimulation(twoLoop, 'TRANSIENT', { dt: 0.0001, tEnd: 0.16 });
+  if (!tr.success || !tr.transient) throw new Error('Transient coupled Z thất bại');
+  const i1Series = tr.transient.elementCurrents['z1'];
+  const lastPeriod = i1Series.slice(Math.max(0, i1Series.length - 200));
+  const peakTransientI1 = Math.max(...lastPeriod.map((v) => Math.abs(v)));
+  const expectedPeakI1 = I1exp.mag() * Math.SQRT2;
+  approx(peakTransientI1, expectedPeakI1, expectedPeakI1 * 0.025, 'Transient I1 hội tụ xác lập AC');
+
+  // Kiểm chứng Z_M có phần thực (R_M + jX_M) trong AC & DC (0 Hz)
+  const complexZmState: CircuitState = {
+    ...twoLoop,
+    elements: twoLoop.elements.map((e) => {
+      if (e.id === 'e1') return { ...e, waveform: 'DC', dcValue: 100 };
+      if (e.id === 'zm') return { ...e, mutualZ: { re: 5, im: 10 } };
+      return e;
+    }),
+  };
+  const dcRes = runSimulation(complexZmState, 'DC');
+  if (!dcRes.success) throw new Error('DC với R_M + jX_M thất bại');
+  // DC: Z1=10, Z2+RL=40, Zm=5 => det = 400 - 25 = 375, I1 = 4000/375 = 10.6667, I2 = -500/375 = -1.3333
+  approx(dcRes.elements.find((e) => e.elementId === 'z1')!.currentDc, 4000 / 375, 1e-4, 'DC I1 với R_M=5');
+  approx(dcRes.elements.find((e) => e.elementId === 'z2')!.currentDc, -500 / 375, 1e-4, 'DC I2 với R_M=5');
+
+  // Kiểm chứng ghép hỗn hợp Cuộn dây (L) và Tổng trở (Z) theo hệ số M (H)
+  const mixedLZ: CircuitState = {
+    ...twoLoop,
+    elements: twoLoop.elements.map((e) => {
+      if (e.id === 'z1') {
+        return { id: 'z1', name: 'L1', type: 'INDUCTOR', x: 220, y: 120, rotation: 0, inductance: 20 / (2 * Math.PI * 50) };
+      }
+      if (e.id === 'zm') {
+        return { ...e, mutualValueMode: 'M_HENRY', mutualM: 10 / (2 * Math.PI * 50) };
+      }
+      return e;
+    }),
+  };
+  // Ở 50 Hz: Z_L1 = j20 (R1=0), Z2+RL = 40+j30, Zm = j10 => det = (j20)(40+j30) + 100 = -500 + j800
+  const detLZ = new Complex(-500, 800);
+  const I1_lz = new Complex(4000, 3000).div(detLZ);
+  const acLZ = runSimulation(mixedLZ, 'AC');
+  if (!acLZ.success) throw new Error('Mixed L-Z mutual AC thất bại');
+  approx(acLZ.elements.find((e) => e.elementId === 'z1')!.currentPhasorMag!, I1_lz.mag(), 1e-4, 'Ghép L-Z |I1|');
+  approx(acLZ.elements.find((e) => e.elementId === 'rf')!.currentPhasorMag!, 0.5 * I1_lz.mag(), 1e-4, 'Ghép L-Z CCCS');
+
+  // Kiểm chứng Quá độ ổn định cho tổng trở dung tính (X < 0) ghép hỗ cảm Z_M
+  const capCoupled: CircuitState = {
+    ...twoLoop,
+    elements: twoLoop.elements.map((e) => {
+      if (e.id === 'z1') return { ...e, impedance: { re: 20, im: -15 } };
+      if (e.id === 'z2') return { ...e, impedance: { re: 25, im: -10 } };
+      if (e.id === 'zm') return { ...e, mutualZ: { re: 0, im: 5 } };
+      return e;
+    }),
+  };
+  const acCap = runSimulation(capCoupled, 'AC');
+  const trCap = runSimulation(capCoupled, 'TRANSIENT', { dt: 0.0001, tEnd: 0.14 });
+  if (!acCap.success || !trCap.success || !trCap.transient) throw new Error('Capacitive coupled Z transient thất bại');
+  const peakAcCap = acCap.elements.find((e) => e.elementId === 'z1')!.currentPhasorMag! * Math.SQRT2;
+  const peakTrCap = Math.max(...trCap.transient.elementCurrents['z1'].slice(-200).map((v) => Math.abs(v)));
+  approx(peakTrCap, peakAcCap, peakAcCap * 0.025, 'Transient ổn định & hội tụ với tổng trở dung tính X < 0 ghép Z_M');
+});
+
+test('Hỗ cảm tổng trở (MUTUAL Z_OHM): cảnh báo k > 1 & tương thích Thévenin / P_max', () => {
+  const state: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 120, y: 200, rotation: 0, waveform: 'AC', acValue: 50, amplitudeType: 'RMS', phaseDeg: 0, freqHz: 50 },
+      { id: 'z1', name: 'Z1', type: 'IMPEDANCE', x: 220, y: 120, rotation: 0, impedance: { re: 4, im: 10 } },
+      { id: 'z2', name: 'Z2', type: 'IMPEDANCE', x: 340, y: 120, rotation: 0, impedance: { re: 6, im: 10 } },
+      { id: 'rl', name: 'RL', type: 'RESISTOR', x: 440, y: 200, rotation: 90, resistance: 20 },
+      { id: 'zm', name: 'ZM', type: 'MUTUAL', x: 280, y: 60, rotation: 0, l1Id: 'z1', l2Id: 'z2', l1DotPin: 1, l2DotPin: 1, dotPolarity: 1, mutualValueMode: 'Z_OHM', mutualZ: { re: 0, im: 15 } },
+      { id: 'gnd1', name: 'GND', type: 'GND', x: 120, y: 300, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 120, y: 160 }, { x: 120, y: 120 }, { x: 180, y: 120 }] },
+      { id: 'w2', points: [{ x: 260, y: 120 }, { x: 260, y: 280 }, { x: 120, y: 280 }, { x: 120, y: 240 }] },
+      { id: 'w3', points: [{ x: 300, y: 120 }, { x: 300, y: 280 }, { x: 440, y: 280 }, { x: 440, y: 240 }] },
+      { id: 'w4', points: [{ x: 380, y: 120 }, { x: 440, y: 120 }, { x: 440, y: 160 }] },
+      { id: 'w5', points: [{ x: 260, y: 280 }, { x: 300, y: 280 }] },
+    ],
+  };
+
+  // |X_M| = 15 > sqrt(10*10) = 10 -> có cảnh báo nhưng vẫn giải bình thường
+  const sim = runSimulation(state, 'AC');
+  if (!sim.success) throw new Error('Giải AC khi k > 1 thất bại');
+  if (!sim.diagnostics.some((d) => d.level === 'warning' && d.text.includes('k > 1'))) {
+    throw new Error('Mong đợi cảnh báo hệ số ghép k > 1 cho tổng trở Z');
+  }
+
+  // Thévenin & P_max tại RL (tách RL, giữ cặp ghép Z1-Z2)
+  const mp = findMaxPowerImpedance(state, '', '', 50, {
+    constraintMode: 'CONJUGATE',
+    excludeElementId: 'rl',
+  });
+  if (!mp.success) throw new Error(`findMaxPowerImpedance thất bại: ${mp.error}`);
+  approx(mp.pSimulated, mp.pMax, 1e-4, 'P_sim MNA khớp P_max trên mạch có hỗ cảm Z_M');
+});
+
 

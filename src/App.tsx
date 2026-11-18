@@ -392,6 +392,18 @@ export default function App() {
                 typeof c.impedance === 'object' &&
                 Number.isFinite(c.impedance.re) &&
                 Number.isFinite(c.impedance.im));
+            const validMutualZ =
+              c.mutualZ === undefined ||
+              (Boolean(c.mutualZ) &&
+                typeof c.mutualZ === 'object' &&
+                Number.isFinite(c.mutualZ.re) &&
+                Number.isFinite(c.mutualZ.im));
+            const validMutualMode =
+              c.mutualValueMode === undefined ||
+              ['M_HENRY', 'Z_OHM'].includes(c.mutualValueMode);
+            const validDotPins =
+              (c.l1DotPin === undefined || c.l1DotPin === 1 || c.l1DotPin === 2) &&
+              (c.l2DotPin === undefined || c.l2DotPin === 1 || c.l2DotPin === 2);
             return (
               typeof c.id === 'string' &&
               typeof c.name === 'string' &&
@@ -401,7 +413,10 @@ export default function App() {
               [0, 90, 180, 270].includes(c.rotation) &&
               validWf &&
               validHarmonics &&
-              validImpedance
+              validImpedance &&
+              validMutualZ &&
+              validMutualMode &&
+              validDotPins
             );
           },
         );
@@ -537,7 +552,7 @@ export default function App() {
           </span>
           <span>MạchĐiệnLab</span>
           <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200/70">
-            v1.2
+            v1.3
           </span>
         </a>
 

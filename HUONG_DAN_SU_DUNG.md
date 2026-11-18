@@ -22,7 +22,7 @@ Tài liệu hướng dẫn chi tiết cách vẽ sơ đồ, thiết lập thông
 
 Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
-- **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
+- **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*, *Hỗ cảm Z*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
 - **Thư viện linh kiện (Cột trái):** Chứa 17 phần tử chuyên ngành điện + ký hiệu Đất (`GND`), có ô tìm kiếm nhanh theo tên hoặc ký hiệu (`R`, `Z`, `C`, `op-amp`, `3 pha`, ...). Nhấp nút thu gọn ở góc trên bên trái thanh công cụ nếu muốn mở rộng không gian vẽ.
 - **Bản vẽ sơ đồ (Giữa):** Lưới tọa độ `20 px` giúp căn thẳng hàng linh kiện và dây dẫn, kèm công tắc **Hiển thị số đo** (hiển thị điện áp nút `N...` và dòng nhánh `I=...` trực tiếp trên mạch) và cụm thu phóng (`+`, `−`, *Khớp khung nhìn*).
 - **Bảng Thông số & Kết quả (Cột phải):** Gồm 4 thẻ:
@@ -87,7 +87,7 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 - **Tụ điện (`CAPACITOR`):** Điện dung `C` (F) và sơ kiện điện áp ban đầu `u_C(0)` (V) giữa chân 1 (`+`) và chân 2 (`−`).
 - **Cuộn cảm (`INDUCTOR`):** Độ tự cảm `L` (H) và sơ kiện dòng điện ban đầu `i_L(0)` (A) đi từ chân 1 vào chân 2.
 - **Tổng trở phức (`IMPEDANCE` / `Z`):** Nhánh tổng trở phức $Z = R + jX$ ($\Omega$) gộp sẵn các thành phần R, L, C trong một nhánh bài tập; hỗ trợ nhập cả dạng đại số (`R + jX`) lẫn dạng cực (`|Z| ∠ φ°`), đồng thời tự hiển thị tổng dẫn $Y = 1/Z$ và tính chất nhánh (tính cảm $X > 0$, tính dung $X < 0$, thuần trở $X = 0$). Trong chế độ **Quá độ**, các nhánh có $X \neq 0$ được tự động quy đổi sang nhánh `R-L` hoặc `R-C` tương đương tại tần số tham chiếu của mạch.
-- **Hỗ cảm (`MUTUAL`):** Ghép từ thông giữa hai cuộn dây `L1` và `L2` đã có trên sơ đồ với hệ số hỗ cảm `M` (H) và chấm cực cùng tính (`Cùng cực 1–1` hoặc `Ngược cực 1–2`). Hỗ trợ đầy đủ cả **AC Phasor** lẫn **Quá độ**.
+- **Hỗ cảm (`MUTUAL`):** Ghép từ thông giữa hai **cuộn dây (`L`)** hoặc hai **tổng trở phức (`Z`)** (kể cả ghép hỗn hợp `L–Z`), hỗ trợ nhập **Hệ số hỗ cảm `M` (H)** hoặc **Tổng trở hỗ cảm $Z_M = R_M + jX_M$ ($\Omega$)**, kèm chọn riêng vị trí chấm cực tính (`•`) tại `Chân 1` hoặc `Chân 2` của từng phần tử (cùng tính hay ngược tính). Hỗ trợ đầy đủ cả **AC Phasor**, **DC** (với $R_M$) và **Quá độ** (tự động quy đổi sang `M` tương đương tại $f_{\text{ref}}$).
 
 ### Nguồn phụ thuộc & Op-Amp lý tưởng
 - **VCVS (`μU`):** Nguồn áp phụ thuộc áp — điện áp nhánh bằng $\mu \cdot (V_{c+} - V_{c-})$. Chọn `Nút điều khiển (+)` và `Nút điều khiển (−)` theo số nút hiển thị trên bản vẽ.

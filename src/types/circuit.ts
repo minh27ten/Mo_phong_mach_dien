@@ -72,11 +72,15 @@ export interface CircuitElement {
   initialVoltage?: number; // u_C(0)
   initialCurrent?: number; // i_L(0)
 
-  // Hỗ cảm (MUTUAL)
+  // Hỗ cảm (MUTUAL) — ghép cuộn dây L (M H) hoặc tổng trở Z (Z_M Ω)
   l1Id?: string;
   l2Id?: string;
   mutualM?: number;
-  dotPolarity?: 1 | -1; // 1 = cùng tính tại chân 1, -1 = ngược tính
+  mutualValueMode?: 'M_HENRY' | 'Z_OHM';
+  mutualZ?: ComplexInput;
+  dotPolarity?: 1 | -1; // 1 = cùng tính tại chân 1, -1 = ngược tính (tương thích ngược)
+  l1DotPin?: 1 | 2;
+  l2DotPin?: 1 | 2;
 
   // Nguồn phụ thuộc (VCVS, CCVS, VCCS, CCCS)
   gain?: number; // mu, r, g, beta

@@ -24,7 +24,13 @@ import {
   Wire,
 } from '../types/circuit';
 import { Complex } from '../engine/complex';
-import { getComponentMeta, getElementWorldPins } from '../engine/pins';
+import {
+  getComponentMeta,
+  getElementWorldPins,
+  getMutualDotPins,
+  getMutualValueMode,
+  isMutualCouplableType,
+} from '../engine/pins';
 import {
   extractTheveninNorton,
   extractTwoPort,
@@ -231,8 +237,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     return Array.from(freqs).sort((a, b) => a - b);
   }, [simulationResult, circuit.elements]);
 
-  const inductors = useMemo(
-    () => circuit.elements.filter((e) => e.type === 'INDUCTOR'),
+  const couplableElements = useMemo(
+    () => circuit.elements.filter((e) => isMutualCouplableType(e.type)),
     [circuit.elements],
   );
   const branchElements = useMemo(
@@ -731,56 +737,162 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           );
         })()}
 
-        {el.type === 'MUTUAL' && (
-          <div className="space-y-3 p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">
-            <label className="block">
-              <span className="block text-[11px] font-medium text-slate-600 mb-1">Cuộn dây thứ nhất (L1)</span>
-              <select
-                value={el.l1Id ?? ''}
-                onChange={(e) => update({ l1Id: e.target.value })}
-                className={SELECT_CLASS}
-              >
-                <option value="">— Chọn cuộn dây L1 —</option>
-                {inductors.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name} ({l.inductance} H)
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="block text-[11px] font-medium text-slate-600 mb-1">Cuộn dây thứ hai (L2)</span>
-              <select
-                value={el.l2Id ?? ''}
-                onChange={(e) => update({ l2Id: e.target.value })}
-                className={SELECT_CLASS}
-              >
-                <option value="">— Chọn cuộn dây L2 —</option>
-                {inductors.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name} ({l.inductance} H)
-                  </option>
-                ))}
-              </select>
-            </label>
-            <NumField
-              label="Hệ số hỗ cảm (M)"
-              unit="H"
-              min={0}
-              value={el.mutualM ?? 0.05}
-              onChange={(v) => update({ mutualM: Math.max(0, v) })}
-            />
-            <SegmentedField
-              label="Cực cùng tính (•)"
-              value={el.dotPolarity ?? 1}
-              options={[
-                { value: 1, label: 'Cùng cực (1–1)' },
-                { value: -1, label: 'Ngược cực (1–2)' },
-              ]}
-              onChange={(pol) => update({ dotPolarity: pol })}
-            />
-          </div>
-        )}
+        {el.type === 'MUTUAL' && (() => {
+          const mMode = getMutualValueMode(el, circuit.elements);
+          const { pin1, pin2, polaritySign } = getMutualDotPins(el);
+          const el1 = circuit.elements.find((e) => e.id === el.l1Id);
+          const el2 = circuit.elements.find((e) => e.id === el.l2Id);
+          const formatBranchLabel = (item: CircuitElement) =>
+            item.type === 'INDUCTOR'
+              ? `${item.name} (${item.inductance ?? 0.1} H)`
+              : `${item.name} (${new Complex(item.impedance?.re ?? 40, item.impedance?.im ?? 30).formatRect(3)} Ω)`;
+          const getDotPinLabels = (item?: CircuitElement) => {
+            if (!item) return { p1: 'Chân 1', p2: 'Chân 2' };
+            const pins = getElementWorldPins(item);
+            const n1 = pins[0] && nodeMap?.[pins[0].key];
+            const n2 = pins[1] && nodeMap?.[pins[1].key];
+            return {
+              p1: n1 ? `Chân 1 (Nút ${n1})` : 'Chân 1',
+              p2: n2 ? `Chân 2 (Nút ${n2})` : 'Chân 2',
+            };
+          };
+          const handleBranchSelect = (slot: 'l1Id' | 'l2Id', nextId: string) => {
+            const b1 = slot === 'l1Id' ? circuit.elements.find((e) => e.id === nextId) : el1;
+            const b2 = slot === 'l2Id' ? circuit.elements.find((e) => e.id === nextId) : el2;
+            const autoMode: 'M_HENRY' | 'Z_OHM' =
+              b1?.type === 'IMPEDANCE' || b2?.type === 'IMPEDANCE'
+                ? 'Z_OHM'
+                : b1?.type === 'INDUCTOR' && b2?.type === 'INDUCTOR'
+                  ? 'M_HENRY'
+                  : mMode;
+            update({
+              [slot]: nextId,
+              mutualValueMode: autoMode,
+              mutualZ: el.mutualZ ?? { re: 0, im: 10 },
+            });
+          };
+          const handleDotChange = (which: 1 | 2, nextPin: 1 | 2) => {
+            const nextPin1 = which === 1 ? nextPin : pin1;
+            const nextPin2 = which === 2 ? nextPin : pin2;
+            update({
+              l1DotPin: nextPin1,
+              l2DotPin: nextPin2,
+              dotPolarity: nextPin1 === nextPin2 ? 1 : -1,
+            });
+          };
+          const dotLabels1 = getDotPinLabels(el1);
+          const dotLabels2 = getDotPinLabels(el2);
+          const zmC = new Complex(el.mutualZ?.re ?? 0, el.mutualZ?.im ?? 10);
+
+          return (
+            <div className="space-y-3 p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">
+              <div className="space-y-2">
+                <label className="block">
+                  <span className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Phần tử thứ nhất (L1 / Z1)
+                  </span>
+                  <select
+                    value={el.l1Id ?? ''}
+                    onChange={(e) => handleBranchSelect('l1Id', e.target.value)}
+                    className={SELECT_CLASS}
+                  >
+                    <option value="">— Chọn L hoặc Z thứ nhất —</option>
+                    {couplableElements.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {formatBranchLabel(item)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <SegmentedField
+                  label="Chấm cực (•) trên phần tử 1"
+                  value={pin1}
+                  options={[
+                    { value: 1, label: dotLabels1.p1 },
+                    { value: 2, label: dotLabels1.p2 },
+                  ]}
+                  onChange={(p) => handleDotChange(1, p)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="block">
+                  <span className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Phần tử thứ hai (L2 / Z2)
+                  </span>
+                  <select
+                    value={el.l2Id ?? ''}
+                    onChange={(e) => handleBranchSelect('l2Id', e.target.value)}
+                    className={SELECT_CLASS}
+                  >
+                    <option value="">— Chọn L hoặc Z thứ hai —</option>
+                    {couplableElements.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {formatBranchLabel(item)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <SegmentedField
+                  label="Chấm cực (•) trên phần tử 2"
+                  value={pin2}
+                  options={[
+                    { value: 1, label: dotLabels2.p1 },
+                    { value: 2, label: dotLabels2.p2 },
+                  ]}
+                  onChange={(p) => handleDotChange(2, p)}
+                />
+              </div>
+
+              <SegmentedField
+                label="Đơn vị hỗ cảm"
+                value={mMode}
+                options={[
+                  { value: 'Z_OHM', label: 'Tổng trở Z_M (Ω)' },
+                  { value: 'M_HENRY', label: 'Hệ số M (H)' },
+                ]}
+                onChange={(nextMode) =>
+                  update({
+                    mutualValueMode: nextMode,
+                    mutualZ: el.mutualZ ?? { re: 0, im: 10 },
+                    mutualM: el.mutualM ?? 0.05,
+                  })
+                }
+              />
+
+              {mMode === 'Z_OHM' ? (
+                <ComplexField
+                  label="Tổng trở hỗ cảm Z_M = R_M + jX_M"
+                  unit="Ω"
+                  value={el.mutualZ ?? { re: 0, im: 10 }}
+                  onChange={(v) => update({ mutualZ: v })}
+                />
+              ) : (
+                <NumField
+                  label="Hệ số hỗ cảm (M)"
+                  unit="H"
+                  min={0}
+                  value={el.mutualM ?? 0.05}
+                  onChange={(v) => update({ mutualM: Math.max(0, v) })}
+                />
+              )}
+
+              <div className="rounded-lg bg-white border border-slate-200/80 px-2.5 py-2 space-y-1 text-[11px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Chiều cực tính</span>
+                  <span className="font-medium text-amber-700">
+                    {polaritySign === 1 ? 'Cùng cực (+Z_M)' : 'Ngược cực (−Z_M)'}
+                  </span>
+                </div>
+                <div className="font-mono tabular-nums text-slate-700">
+                  {mMode === 'Z_OHM'
+                    ? `Z_M = ${polaritySign < 0 ? '−(' : ''}${zmC.formatRect(3)}${polaritySign < 0 ? ')' : ''} Ω`
+                    : `M = ${polaritySign < 0 ? '−' : '+'}${el.mutualM ?? 0.05} H`}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {(el.type === 'VCVS' || el.type === 'VCCS') && (
           <div className="space-y-3 p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">

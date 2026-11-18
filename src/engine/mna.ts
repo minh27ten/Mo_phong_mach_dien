@@ -17,7 +17,14 @@ import {
 } from '../types/circuit';
 import { Complex, solveLinearComplex, solveLinearReal } from './complex';
 import { buildNetlist, NetlistGraph } from './netlist';
-import { getElementWorldPins } from './pins';
+import {
+  getCoupledElementIds,
+  getElementWorldPins,
+  getMutualDotPins,
+  getMutualEffectiveImpedance,
+  getMutualValueMode,
+  isMutualCouplableType,
+} from './pins';
 
 const G_MIN = 1e-12;
 const SQRT2 = Math.SQRT2;
@@ -254,6 +261,7 @@ function solveSingleFrequencyMna(
   const activeElements = options?.excludeElementIds?.size
     ? elements.filter((e) => !options.excludeElementIds!.has(e.id))
     : elements;
+  const coupledIds = getCoupledElementIds(activeElements);
   const realNodeIds = netlist.allNodeIds.filter((id) => id !== '0');
   const nodeIdToIdx = new Map<string, number>();
   nodeIdToIdx.set('0', -1);
@@ -290,7 +298,7 @@ function solveSingleFrequencyMna(
     if (el.type === 'V_SRC' || el.type === 'VCVS' || el.type === 'CCVS') {
       const idx = registerAux(el.id, 'i');
       if (sensedIds.has(el.id)) senseBranchVar.set(el.id, idx);
-    } else if (el.type === 'INDUCTOR') {
+    } else if (el.type === 'INDUCTOR' || (el.type === 'IMPEDANCE' && coupledIds.has(el.id))) {
       const idx = registerAux(el.id, 'i');
       if (sensedIds.has(el.id)) senseBranchVar.set(el.id, idx);
     } else if (el.type === 'OPAMP') {
@@ -429,11 +437,26 @@ function solveSingleFrequencyMna(
         break;
       }
       case 'IMPEDANCE': {
-        const p = getEffectivePin1(el, '1');
-        const n = getPinNode(el.id, '2');
         const zRaw = toComplex(el.impedance, 40, 30);
         const Z = isDc ? new Complex(zRaw.re, 0) : zRaw;
-        stampImpedance(A, p, n, Z);
+        const aux = elementAuxMap.get(el.id)?.i;
+        if (aux !== undefined) {
+          const p = getPinNode(el.id, '1');
+          const n = getPinNode(el.id, '2');
+          if (p >= 0) {
+            addEntry(A, p, aux, Complex.one());
+            addEntry(A, aux, p, Complex.one());
+          }
+          if (n >= 0) {
+            addEntry(A, n, aux, Complex.one().neg());
+            addEntry(A, aux, n, Complex.one().neg());
+          }
+          addEntry(A, aux, aux, Z.neg());
+        } else {
+          const p = getEffectivePin1(el, '1');
+          const n = getPinNode(el.id, '2');
+          stampImpedance(A, p, n, Z);
+        }
         break;
       }
       case 'CAPACITOR': {
@@ -466,15 +489,14 @@ function solveSingleFrequencyMna(
         break;
       }
       case 'MUTUAL': {
-        if (!isDc && el.l1Id && el.l2Id && el.l1Id !== el.l2Id) {
+        if (el.l1Id && el.l2Id && el.l1Id !== el.l2Id) {
           const aux1 = elementAuxMap.get(el.l1Id)?.i;
           const aux2 = elementAuxMap.get(el.l2Id)?.i;
           if (aux1 !== undefined && aux2 !== undefined) {
-            const s = el.dotPolarity ?? 1;
-            const M = (el.mutualM ?? 0) * s;
-            const negJwM = new Complex(0, -omega * M);
-            addEntry(A, aux1, aux2, negJwM);
-            addEntry(A, aux2, aux1, negJwM);
+            const zm = getMutualEffectiveImpedance(el, activeElements, targetFreqHz, isDc);
+            const negZm = new Complex(-zm.re, -zm.im);
+            addEntry(A, aux1, aux2, negZm);
+            addEntry(A, aux2, aux1, negZm);
           }
         }
         break;
@@ -844,6 +866,11 @@ function extractElementBranchAtFreq(
     }
     case 'IMPEDANCE': {
       const U = getPinV('1').sub(getPinV('2'));
+      const auxIdx = sys.elementAuxMap.get(el.id)?.i;
+      if (auxIdx !== undefined) {
+        const I = x[auxIdx];
+        return { U, I, S: U.mul(I.conj()) };
+      }
       const zRaw = toComplex(el.impedance, 40, 30);
       const Z = isDc ? new Complex(zRaw.re, 0) : zRaw;
       const I = branchCurrentFromImpedance(U, Z);
@@ -1148,6 +1175,7 @@ function runTransientSimulation(
   let nextNodeIdx = realNodeIds.length;
   const allocNode = () => nextNodeIdx++;
 
+  const coupledIds = getCoupledElementIds(elements);
   const sensedIds = new Set<string>();
   for (const el of elements) {
     if ((el.type === 'CCVS' || el.type === 'CCCS') && el.ctrlElementId) {
@@ -1173,7 +1201,7 @@ function runTransientSimulation(
     if (el.type === 'V_SRC' || el.type === 'VCVS' || el.type === 'CCVS') {
       const idx = registerAux(el.id, 'i');
       if (sensedIds.has(el.id)) senseBranchVar.set(el.id, idx);
-    } else if (el.type === 'INDUCTOR') {
+    } else if (el.type === 'INDUCTOR' || (el.type === 'IMPEDANCE' && coupledIds.has(el.id))) {
       const idx = registerAux(el.id, 'i');
       if (sensedIds.has(el.id)) senseBranchVar.set(el.id, idx);
     } else if (el.type === 'CAPACITOR') {
@@ -1250,12 +1278,17 @@ function runTransientSimulation(
     return nodeIdToIdx.get(nid) ?? -1;
   };
 
-  // Trạng thái quá khứ của tụ điện và cuộn dây
+  // Trạng thái quá khứ của tụ điện, cuộn dây và phần tử tổng trở ghép hỗ cảm
   const prevUc = new Map<string, number>();
   const prevIl = new Map<string, number>();
+  const prevImpUc = new Map<string, number>();
   for (const el of elements) {
     if (el.type === 'CAPACITOR') prevUc.set(el.id, el.initialVoltage ?? 0);
     if (el.type === 'INDUCTOR') prevIl.set(el.id, el.initialCurrent ?? 0);
+    if (el.type === 'IMPEDANCE' && coupledIds.has(el.id)) {
+      prevIl.set(el.id, 0);
+      prevImpUc.set(el.id, 0);
+    }
   }
 
   const safeTEnd = Math.max(1e-6, Number.isFinite(tEnd) ? tEnd : 0.04);
@@ -1352,12 +1385,52 @@ function runTransientSimulation(
   const prevTpState = new Map<string, number>();
   const lastTpCurrent = new Map<string, number>();
 
+  const incidentMutualAbsX = new Map<string, number>();
+  for (const el of elements) {
+    if (el.type === 'MUTUAL' && el.l1Id && el.l2Id && el.l1Id !== el.l2Id) {
+      const mMode = getMutualValueMode(el, elements);
+      const xmAbs =
+        mMode === 'Z_OHM'
+          ? Math.abs(Number.isFinite(el.mutualZ?.im) ? el.mutualZ!.im : 10)
+          : omegaRef * Math.abs(el.mutualM ?? 0);
+      if (xmAbs > 0) {
+        incidentMutualAbsX.set(el.l1Id, (incidentMutualAbsX.get(el.l1Id) ?? 0) + xmAbs);
+        incidentMutualAbsX.set(el.l2Id, (incidentMutualAbsX.get(el.l2Id) ?? 0) + xmAbs);
+      }
+    }
+  }
+  const coupledImpParams = new Map<string, { r: number; lEq: number; cEq: number }>();
+
+  let hasCoupledZInTransient = false;
   for (const el of elements) {
     if (el.type === 'IMPEDANCE') {
       const z = toComplex(el.impedance, 40, 30);
-      const p = internalNodes.get(el.id)?.sense ?? getPinNode(el.id, '1');
-      const n = getPinNode(el.id, '2');
-      impBranchByEl.set(el.id, makeCompanionBranch(el.id, p, n, z, 'IMP', 1e-9));
+      if (coupledIds.has(el.id)) {
+        if (Math.abs(z.im) > 1e-9) hasReactiveImpedance = true;
+        const incX = incidentMutualAbsX.get(el.id) ?? 0;
+        let lEq = 0;
+        let cEq = 0;
+        // Bảo đảm ma trận điện cảm xác định dương trong miền thời gian bằng chuỗi R-L-C tương đương tại f_ref
+        if (incX > 0 && z.im < incX * 1.05) {
+          const xL = Math.max(z.im, incX * 1.25 + 1);
+          const xC = xL - z.im;
+          lEq = xL / omegaRef;
+          cEq = 1 / (omegaRef * xC);
+        } else if (z.im > 1e-9) {
+          lEq = z.im / omegaRef;
+        } else if (z.im < -1e-9) {
+          cEq = 1 / (omegaRef * Math.abs(z.im));
+        }
+        coupledImpParams.set(el.id, { r: z.re, lEq, cEq });
+      } else {
+        const p = internalNodes.get(el.id)?.sense ?? getPinNode(el.id, '1');
+        const n = getPinNode(el.id, '2');
+        impBranchByEl.set(el.id, makeCompanionBranch(el.id, p, n, z, 'IMP', 1e-9));
+      }
+    } else if (el.type === 'MUTUAL' && el.l1Id && el.l2Id && el.l1Id !== el.l2Id) {
+      if (getMutualValueMode(el, elements) === 'Z_OHM') {
+        hasCoupledZInTransient = true;
+      }
     } else if (el.type === 'THREE_PHASE_LINE') {
       const zd = toComplex(el.lineZ, 1.5, 3.0);
       const zn = toComplex(el.lineZn, 2.0, 1.0);
@@ -1401,10 +1474,10 @@ function runTransientSimulation(
       text: `Mô phỏng quá độ đã quy đổi phần tử 3 pha có điện kháng (X ≠ 0) sang phần tử R-L/R-C tương đương tại tần số tham chiếu ${fRef} Hz.`,
     });
   }
-  if (hasReactiveImpedance) {
+  if (hasReactiveImpedance || hasCoupledZInTransient) {
     diagnostics.push({
       level: 'info',
-      text: `Mô phỏng quá độ đã quy đổi phần tử tổng trở Z có điện kháng (X ≠ 0) sang nhánh R-L/R-C tương đương tại tần số tham chiếu ${fRef} Hz.`,
+      text: `Mô phỏng quá độ đã quy đổi phần tử tổng trở Z / hỗ cảm Z_M (X ≠ 0) sang nhánh R-L/R-C/M tương đương tại tần số tham chiếu ${fRef} Hz.`,
     });
   }
 
@@ -1437,10 +1510,23 @@ function runTransientSimulation(
 
   // Virtual infinitesimal sub-step dt0 at t = 0+ enforces i_L(0+) = i_L(0) via L/dt0 without
   // decoupling intermediate inductor-to-inductor nodes or mutual coupling at t = 0+.
-  const posInductances = elements
-    .filter((e) => e.type === 'INDUCTOR')
-    .map((e) => Math.max(0, e.inductance ?? 0.1))
-    .filter((l) => l > 0);
+  const posInductances: number[] = [];
+  for (const e of elements) {
+    if (e.type === 'INDUCTOR') {
+      const lVal = Math.max(0, e.inductance ?? 0.1);
+      if (lVal > 0) posInductances.push(lVal);
+    } else if (e.type === 'IMPEDANCE' && coupledIds.has(e.id)) {
+      const lEq = coupledImpParams.get(e.id)?.lEq ?? 0;
+      if (lEq > 0) posInductances.push(lEq);
+    } else if (e.type === 'MUTUAL' && e.l1Id && e.l2Id && e.l1Id !== e.l2Id) {
+      const mMode = getMutualValueMode(e, elements);
+      const mAbs =
+        mMode === 'Z_OHM'
+          ? Math.abs((e.mutualZ?.im ?? 10) / omegaRef)
+          : Math.abs(e.mutualM ?? 0);
+      if (mAbs > 1e-12) posInductances.push(mAbs);
+    }
+  }
   const dt0 =
     posInductances.length > 0
       ? Math.max(Math.min(...posInductances) / 1e6, Math.max(...posInductances) / 1e9, 1e-12)
@@ -1494,14 +1580,33 @@ function runTransientSimulation(
           break;
         }
         case 'IMPEDANCE': {
-          getEffPin1(el, '1');
-          const br = impBranchByEl.get(el.id);
-          if (br) {
-            const iHist = getTpIHist(br);
-            stampCondR(A, br.p, br.n, br.gEq);
-            if (iHist !== 0) {
-              addB(b, br.p, -iHist);
-              addB(b, br.n, iHist);
+          const aux = elementAuxMap.get(el.id)?.i;
+          if (aux !== undefined) {
+            const p = getPinNode(el.id, '1');
+            const n = getPinNode(el.id, '2');
+            addR(A, p, aux, 1);
+            addR(A, aux, p, 1);
+            addR(A, n, aux, -1);
+            addR(A, aux, n, -1);
+            const cp = coupledImpParams.get(el.id);
+            if (cp) {
+              const rL = cp.lEq > 0 ? cp.lEq / dtStep : 0;
+              const rC = cp.cEq > 0 ? dtStep / cp.cEq : 0;
+              const rTotal = cp.r + rL + rC;
+              if (rTotal !== 0) addR(A, aux, aux, -rTotal);
+              if (rL > 0) addB(b, aux, -rL * (prevIl.get(el.id) ?? 0));
+              if (cp.cEq > 0) addB(b, aux, prevImpUc.get(el.id) ?? 0);
+            }
+          } else {
+            getEffPin1(el, '1');
+            const br = impBranchByEl.get(el.id);
+            if (br) {
+              const iHist = getTpIHist(br);
+              stampCondR(A, br.p, br.n, br.gEq);
+              if (iHist !== 0) {
+                addB(b, br.p, -iHist);
+                addB(b, br.n, iHist);
+              }
             }
           }
           break;
@@ -1550,12 +1655,26 @@ function runTransientSimulation(
             const aux1 = elementAuxMap.get(el.l1Id)?.i;
             const aux2 = elementAuxMap.get(el.l2Id)?.i;
             if (aux1 !== undefined && aux2 !== undefined) {
-              const s = el.dotPolarity ?? 1;
-              const Rm = ((el.mutualM ?? 0) * s) / dtStep;
-              addR(A, aux1, aux2, -Rm);
-              addR(A, aux2, aux1, -Rm);
-              addB(b, aux1, -Rm * (prevIl.get(el.l2Id) ?? 0));
-              addB(b, aux2, -Rm * (prevIl.get(el.l1Id) ?? 0));
+              const { polaritySign: s } = getMutualDotPins(el);
+              const mMode = getMutualValueMode(el, elements);
+              const rm =
+                mMode === 'Z_OHM'
+                  ? s * (Number.isFinite(el.mutualZ?.re) ? el.mutualZ!.re : 0)
+                  : 0;
+              const mEq =
+                mMode === 'Z_OHM'
+                  ? (s * (Number.isFinite(el.mutualZ?.im) ? el.mutualZ!.im : 10)) / omegaRef
+                  : s * (el.mutualM ?? 0);
+              const rReact = mEq / dtStep;
+              const rMut = rm + rReact;
+              if (rMut !== 0) {
+                addR(A, aux1, aux2, -rMut);
+                addR(A, aux2, aux1, -rMut);
+              }
+              if (rReact !== 0) {
+                addB(b, aux1, -rReact * (prevIl.get(el.l2Id) ?? 0));
+                addB(b, aux2, -rReact * (prevIl.get(el.l1Id) ?? 0));
+              }
             }
           }
           break;
@@ -1790,7 +1909,17 @@ function runTransientSimulation(
         iVal = u / Math.max(1e-9, el.resistance ?? 100);
       } else if (el.type === 'IMPEDANCE') {
         u = getV(getPinNode(el.id, '1')) - getV(getPinNode(el.id, '2'));
-        iVal = lastTpCurrent.get(el.id) ?? 0;
+        const aux = elementAuxMap.get(el.id)?.i;
+        if (aux !== undefined) {
+          iVal = x[aux];
+          prevIl.set(el.id, iVal);
+          const cp = coupledImpParams.get(el.id);
+          if (cp && cp.cEq > 0) {
+            prevImpUc.set(el.id, (prevImpUc.get(el.id) ?? 0) + (dtStep / cp.cEq) * iVal);
+          }
+        } else {
+          iVal = lastTpCurrent.get(el.id) ?? 0;
+        }
       } else if (el.type === 'CAPACITOR') {
         u = getV(getPinNode(el.id, '1')) - getV(getPinNode(el.id, '2'));
         if (isT0) {
@@ -1952,31 +2081,53 @@ export function runSimulation(
       if (!el.l1Id || !el.l2Id) {
         diagnostics.push({
           level: 'warning',
-          text: `Hỗ cảm ${el.name}: chưa chọn đủ hai cuộn dây L1, L2.`,
+          text: `Hỗ cảm ${el.name}: chưa chọn đủ hai phần tử L hoặc Z cần ghép.`,
         });
         continue;
       }
       if (el.l1Id === el.l2Id) {
         diagnostics.push({
           level: 'warning',
-          text: `Hỗ cảm ${el.name}: L1 và L2 phải là hai cuộn dây khác nhau.`,
+          text: `Hỗ cảm ${el.name}: hai phần tử được ghép phải khác nhau.`,
         });
         continue;
       }
-      const l1 = state.elements.find((e) => e.id === el.l1Id && e.type === 'INDUCTOR');
-      const l2 = state.elements.find((e) => e.id === el.l2Id && e.type === 'INDUCTOR');
+      const l1 = state.elements.find((e) => e.id === el.l1Id && isMutualCouplableType(e.type));
+      const l2 = state.elements.find((e) => e.id === el.l2Id && isMutualCouplableType(e.type));
       if (!l1 || !l2) {
         diagnostics.push({
           level: 'warning',
-          text: `Hỗ cảm ${el.name}: cuộn dây tham chiếu không còn tồn tại trong sơ đồ.`,
+          text: `Hỗ cảm ${el.name}: phần tử tham chiếu (L hoặc Z) không còn tồn tại trong sơ đồ.`,
         });
       } else {
-        const maxM = Math.sqrt((l1.inductance ?? 0) * (l2.inductance ?? 0));
-        if (Math.abs(el.mutualM ?? 0) > maxM + 1e-12) {
-          diagnostics.push({
-            level: 'warning',
-            text: `Hỗ cảm ${el.name}: |M| = ${Math.abs(el.mutualM ?? 0)} H lớn hơn √(L1·L2) = ${maxM.toFixed(4)} H (hệ số ghép k > 1).`,
-          });
+        const mMode = getMutualValueMode(el, state.elements);
+        if (mMode === 'M_HENRY' && l1.type === 'INDUCTOR' && l2.type === 'INDUCTOR') {
+          const maxM = Math.sqrt((l1.inductance ?? 0) * (l2.inductance ?? 0));
+          if (Math.abs(el.mutualM ?? 0) > maxM + 1e-12) {
+            diagnostics.push({
+              level: 'warning',
+              text: `Hỗ cảm ${el.name}: |M| = ${Math.abs(el.mutualM ?? 0)} H lớn hơn √(L1·L2) = ${maxM.toFixed(4)} H (hệ số ghép k > 1).`,
+            });
+          }
+        } else if (mMode === 'Z_OHM' && l1.type === 'IMPEDANCE' && l2.type === 'IMPEDANCE') {
+          const z1 = toComplex(l1.impedance, 40, 30);
+          const z2 = toComplex(l2.impedance, 40, 30);
+          const zm = toComplex(el.mutualZ, 0, 10);
+          if (z1.im > 0 && z2.im > 0) {
+            const maxXm = Math.sqrt(z1.im * z2.im);
+            if (Math.abs(zm.im) > maxXm + 1e-12) {
+              diagnostics.push({
+                level: 'warning',
+                text: `Hỗ cảm ${el.name}: |X_M| = ${Math.abs(zm.im)} Ω lớn hơn √(X1·X2) = ${maxXm.toFixed(4)} Ω (hệ số ghép k > 1).`,
+              });
+            }
+          }
+          if (z1.re >= 0 && z2.re >= 0 && Math.abs(zm.re) > Math.sqrt(z1.re * z2.re) + 1e-9) {
+            diagnostics.push({
+              level: 'warning',
+              text: `Hỗ cảm ${el.name}: |R_M| = ${Math.abs(zm.re)} Ω vượt quá √(R1·R2) = ${Math.sqrt(z1.re * z2.re).toFixed(4)} Ω (cặp hỗ cảm có thể không thụ động).`,
+            });
+          }
         }
       }
     } else if (el.type === 'CCVS' || el.type === 'CCCS') {
@@ -2044,7 +2195,11 @@ export function runSimulation(
       });
     }
     const hasReactiveZInDc = state.elements.some(
-      (el) => el.type === 'IMPEDANCE' && Math.abs(el.impedance?.im ?? 0) > 1e-12,
+      (el) =>
+        (el.type === 'IMPEDANCE' && Math.abs(el.impedance?.im ?? 0) > 1e-12) ||
+        (el.type === 'MUTUAL' &&
+          getMutualValueMode(el, state.elements) === 'Z_OHM' &&
+          Math.abs(el.mutualZ?.im ?? 0) > 1e-12),
     );
     if (hasReactiveZInDc) {
       diagnostics.push({
@@ -2083,6 +2238,9 @@ export function runSimulation(
   if (mode === 'AC' && acFreqs.length > 1) {
     const hasStaticReactiveBlock = state.elements.some((el) => {
       if (el.type === 'IMPEDANCE') return Math.abs(el.impedance?.im ?? 0) > 1e-12;
+      if (el.type === 'MUTUAL' && getMutualValueMode(el, state.elements) === 'Z_OHM') {
+        return Math.abs(el.mutualZ?.im ?? 0) > 1e-12;
+      }
       if (el.type === 'ONE_PORT') return Math.abs(el.onePortZ?.im ?? 0) > 1e-12;
       if (el.type === 'TWO_PORT') {
         return [el.m11, el.m12, el.m21, el.m22].some((m) => Math.abs(m?.im ?? 0) > 1e-12);
@@ -2664,8 +2822,13 @@ export function findMaxPowerImpedance(
     const hasDependentSensor = state.elements.some(
       (e) => (e.type === 'CCVS' || e.type === 'CCCS') && e.ctrlElementId === targetEl.id,
     );
-    if (hasDependentSensor) {
-      warning = `Phần tử ${targetEl.name} đang được nguồn phụ thuộc cảm biến dòng; định lý Thévenin cắt nhánh tải có thể làm mất biến điều khiển.`;
+    const hasMutualCoupling = state.elements.some(
+      (e) => e.type === 'MUTUAL' && (e.l1Id === targetEl.id || e.l2Id === targetEl.id),
+    );
+    if (hasDependentSensor || hasMutualCoupling) {
+      warning = hasDependentSensor
+        ? `Phần tử ${targetEl.name} đang được nguồn phụ thuộc cảm biến dòng; định lý Thévenin cắt nhánh tải có thể làm mất biến điều khiển.`
+        : `Phần tử ${targetEl.name} đang tham gia ghép hỗ cảm; tách riêng nhánh tải sẽ cắt bỏ tương tác hỗ cảm với nhánh còn lại.`;
     }
   }
 

@@ -78,12 +78,12 @@ export const COMPONENT_CATALOG: ComponentMeta[] = [
   },
   {
     type: 'MUTUAL',
-    label: 'Hỗ cảm (M)',
-    shortLabel: 'Hỗ cảm M',
+    label: 'Hỗ cảm (M / Z_M)',
+    shortLabel: 'Hỗ cảm',
     category: 'passive',
     categoryLabel: 'Phần tử thụ động & Hỗ cảm',
     prefix: 'M',
-    description: 'Ghép từ trường giữa hai cuộn dây L1, L2.',
+    description: 'Ghép từ trường giữa hai cuộn dây (L) hoặc hai tổng trở phức (Z).',
   },
   {
     type: 'VCVS',
@@ -382,12 +382,21 @@ export function createDefaultElement(
       return { ...base, impedance: { re: 40, im: 30 } };
     case 'MUTUAL': {
       const inductors = existingElements.filter((e) => e.type === 'INDUCTOR');
+      const couplables = existingElements.filter((e) => isMutualCouplableType(e.type));
+      const picked = inductors.length >= 2 ? inductors : couplables;
+      const first = picked[0];
+      const second = picked[1];
+      const hasImpedance = first?.type === 'IMPEDANCE' || second?.type === 'IMPEDANCE';
       return {
         ...base,
-        l1Id: inductors[0]?.id ?? '',
-        l2Id: inductors[1]?.id ?? '',
+        l1Id: first?.id ?? '',
+        l2Id: second?.id ?? '',
         mutualM: 0.05,
+        mutualValueMode: hasImpedance ? 'Z_OHM' : 'M_HENRY',
+        mutualZ: { re: 0, im: 10 },
         dotPolarity: 1,
+        l1DotPin: 1,
+        l2DotPin: 1,
       };
     }
     case 'VCVS':
@@ -446,6 +455,85 @@ export function createDefaultElement(
         loadZc: { re: 40, im: 30 },
       };
   }
+}
+
+export function isMutualCouplableType(type: ComponentType): boolean {
+  return type === 'INDUCTOR' || type === 'IMPEDANCE';
+}
+
+export function getMutualDotPins(
+  mEl: Pick<CircuitElement, 'l1DotPin' | 'dotPolarity' | 'l2DotPin'>,
+): { pin1: 1 | 2; pin2: 1 | 2; polaritySign: 1 | -1 } {
+  const pin1: 1 | 2 = mEl.l1DotPin === 2 ? 2 : 1;
+  const pin2: 1 | 2 =
+    mEl.l2DotPin === 1 || mEl.l2DotPin === 2 ? mEl.l2DotPin : (mEl.dotPolarity ?? 1) === 1 ? 1 : 2;
+  return {
+    pin1,
+    pin2,
+    polaritySign: pin1 === pin2 ? 1 : -1,
+  };
+}
+
+export function getMutualValueMode(
+  mEl: Pick<CircuitElement, 'mutualValueMode' | 'l1Id' | 'l2Id' | 'mutualZ' | 'mutualM'>,
+  elements?: CircuitElement[],
+): 'M_HENRY' | 'Z_OHM' {
+  if (mEl.mutualValueMode === 'Z_OHM' || mEl.mutualValueMode === 'M_HENRY') {
+    return mEl.mutualValueMode;
+  }
+  if (elements) {
+    const e1 = elements.find((e) => e.id === mEl.l1Id);
+    const e2 = elements.find((e) => e.id === mEl.l2Id);
+    if (e1?.type === 'IMPEDANCE' || e2?.type === 'IMPEDANCE') {
+      return 'Z_OHM';
+    }
+  }
+  if (mEl.mutualZ !== undefined && mEl.mutualM === undefined) {
+    return 'Z_OHM';
+  }
+  return 'M_HENRY';
+}
+
+export function getMutualEffectiveImpedance(
+  mEl: CircuitElement,
+  elements: CircuitElement[],
+  freqHz: number,
+  isDc: boolean,
+): { re: number; im: number } {
+  const { polaritySign } = getMutualDotPins(mEl);
+  const mode = getMutualValueMode(mEl, elements);
+  if (mode === 'Z_OHM') {
+    const rm = Number.isFinite(mEl.mutualZ?.re) ? mEl.mutualZ!.re : 0;
+    const xm = Number.isFinite(mEl.mutualZ?.im) ? mEl.mutualZ!.im : 10;
+    return {
+      re: polaritySign * rm,
+      im: isDc ? 0 : polaritySign * xm,
+    };
+  }
+  const mVal = Number.isFinite(mEl.mutualM) ? mEl.mutualM! : 0;
+  return {
+    re: 0,
+    im: isDc ? 0 : polaritySign * 2 * Math.PI * freqHz * mVal,
+  };
+}
+
+export function getCoupledElementIds(elements: CircuitElement[]): Set<string> {
+  const coupled = new Set<string>();
+  const validIds = new Set(elements.filter((e) => isMutualCouplableType(e.type)).map((e) => e.id));
+  for (const el of elements) {
+    if (
+      el.type === 'MUTUAL' &&
+      el.l1Id &&
+      el.l2Id &&
+      el.l1Id !== el.l2Id &&
+      validIds.has(el.l1Id) &&
+      validIds.has(el.l2Id)
+    ) {
+      coupled.add(el.l1Id);
+      coupled.add(el.l2Id);
+    }
+  }
+  return coupled;
 }
 
 export function formatEngValue(value: number, unit: string): string {
