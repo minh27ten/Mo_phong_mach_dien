@@ -31,6 +31,7 @@ export const TransientPlot: React.FC<TransientPlotProps> = ({ transient, element
           el.type === 'ONE_PORT' ||
           el.type === 'CAPACITOR' ||
           el.type === 'INDUCTOR' ||
+          el.type === 'IMPEDANCE' ||
           el.type === 'RESISTOR')
       ) {
         list.push({ key: `volt:${el.id}`, label: `u(${el.name}) [V]`, kind: 'V', values: vVals });

@@ -57,7 +57,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
               Thư viện phần tử
             </h2>
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">
-              16+GND
+              17+GND
             </span>
           </div>
           {placingType && (
@@ -77,7 +77,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm điện trở, op-amp, 3 pha..."
+            placeholder="Tìm điện trở, Z, op-amp, 3 pha..."
             aria-label="Tìm kiếm phần tử mạch điện"
             className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50/80 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 transition-all"
           />

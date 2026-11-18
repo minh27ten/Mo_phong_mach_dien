@@ -1,5 +1,6 @@
 import React from 'react';
 import { CircuitElement, ComponentType } from '../types/circuit';
+import { Complex } from '../engine/complex';
 import { formatEngValue, getLocalPins } from '../engine/pins';
 
 interface SymbolProps {
@@ -116,6 +117,30 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             {hasDotAtPin2 && <circle cx={22} cy={-10} r={2.8} fill="#DC2626" stroke="none" />}
           </g>
         );
+      case 'IMPEDANCE': {
+        const rot = element?.rotation ?? 0;
+        return (
+          <g stroke={stroke} strokeWidth={sw} fill="none">
+            <line x1={-40} y1={0} x2={-20} y2={0} />
+            <line x1={20} y1={0} x2={40} y2={0} />
+            <rect x={-20} y={-9} width={40} height={18} rx={2} fill="#EFF6FF" />
+            <text
+              x={0}
+              y={0}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={11}
+              fontWeight={700}
+              fill={accent}
+              stroke="none"
+              transform={rot ? `rotate(${-rot})` : undefined}
+              className="font-mono"
+            >
+              Z
+            </text>
+          </g>
+        );
+      }
       case 'MUTUAL':
         return (
           <g stroke={stroke} strokeWidth={sw} fill="none">
@@ -370,6 +395,16 @@ export function getElementSummaryText(el: CircuitElement): string {
       return formatEngValue(el.capacitance ?? 100e-6, 'F');
     case 'INDUCTOR':
       return formatEngValue(el.inductance ?? 0.1, 'H');
+    case 'IMPEDANCE': {
+      const z = new Complex(el.impedance?.re ?? 40, el.impedance?.im ?? 30);
+      const re = Math.abs(z.re) < 1e-11 ? 0 : z.re;
+      const im = Math.abs(z.im) < 1e-11 ? 0 : z.im;
+      if (re === 0 && im !== 0) {
+        const imStr = Math.abs(im).toFixed(3).replace(/\.?0+$/, '');
+        return `${im < 0 ? '-' : ''}j${imStr} Ω`;
+      }
+      return `${z.formatRect(3)} Ω`;
+    }
     case 'MUTUAL':
       return `M = ${formatEngValue(el.mutualM ?? 0.05, 'H')}`;
     case 'VCVS':

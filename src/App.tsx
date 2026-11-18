@@ -268,6 +268,12 @@ export default function App() {
                     Number.isFinite(h.amplitude) &&
                     Number.isFinite(h.phaseDeg),
                 ));
+            const validImpedance =
+              c.impedance === undefined ||
+              (Boolean(c.impedance) &&
+                typeof c.impedance === 'object' &&
+                Number.isFinite(c.impedance.re) &&
+                Number.isFinite(c.impedance.im));
             return (
               typeof c.id === 'string' &&
               typeof c.name === 'string' &&
@@ -276,7 +282,8 @@ export default function App() {
               Number.isFinite(c.y) &&
               [0, 90, 180, 270].includes(c.rotation) &&
               validWf &&
-              validHarmonics
+              validHarmonics &&
+              validImpedance
             );
           },
         );
@@ -411,6 +418,9 @@ export default function App() {
             <Zap className="w-4 h-4 fill-current" />
           </span>
           <span>MạchĐiệnLab</span>
+          <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200/70">
+            v1.1
+          </span>
         </a>
 
         <nav

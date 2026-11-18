@@ -39,14 +39,14 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
 
 ---
 
-## 🧩 Danh mục linh kiện (`16 + GND`)
+## 🧩 Danh mục linh kiện (`17 + GND`)
 
-Ngoài **Nút đất chuẩn (`GND`)**, thư viện hỗ trợ 16 phần tử kỹ thuật điện chuẩn IEC/IEEE:
+Ngoài **Nút đất chuẩn (`GND`)**, thư viện hỗ trợ 17 phần tử kỹ thuật điện chuẩn IEC/IEEE:
 
 | Nhóm | Ký hiệu / Mã loại | Phần tử |
 | :--- | :--- | :--- |
 | **Nguồn độc lập** | `V_SRC` (`E`), `I_SRC` (`J`) | Nguồn áp độc lập, Nguồn dòng độc lập (DC / AC / Hỗn hợp đa sóng hài / Step) |
-| **Phần tử thụ động** | `RESISTOR` (`R`), `CAPACITOR` (`C`), `INDUCTOR` (`L`), `MUTUAL` (`M`) | Điện trở, Tụ điện, Cuộn cảm, Ghép hỗ cảm |
+| **Phần tử thụ động** | `RESISTOR` (`R`), `CAPACITOR` (`C`), `INDUCTOR` (`L`), `IMPEDANCE` (`Z`), `MUTUAL` (`M`) | Điện trở, Tụ điện, Cuộn cảm, Tổng trở phức $Z = R + jX$, Ghép hỗ cảm |
 | **Nguồn phụ thuộc** | `VCVS`, `CCVS`, `VCCS`, `CCCS` | 4 loại nguồn phụ thuộc tuyến tính ($\mu, r, g, \beta$) |
 | **Khuếch đại** | `OPAMP` (`OA`) | Khuếch đại thuật toán lý tưởng ($V_+ = V_-$, $I_{\text{in}} = 0$) |
 | **Mạng tương đương** | `ONE_PORT` (`P1`), `TWO_PORT` (`P2`) | Mạng 1 cửa (Thévenin/Norton), Mạng 2 cửa ($[Z], [Y], [A]$) |
@@ -77,7 +77,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 | :--- | :--- |
 | `npm run dev` | Chạy máy chủ phát triển Vite tại cổng `3000` |
 | `npm run lint` | Kiểm tra kiểu tĩnh TypeScript (`tsc --noEmit`) |
-| `npm test` | Chạy 34 bài kiểm thử tự động bộ giải MNA & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
+| `npm test` | Chạy 37 bài kiểm thử tự động bộ giải MNA & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
 | `npm run build` | Build bản web tối ưu vào `dist/` |
 | `npm run preview` | Xem trước bản build `dist/` qua Vite Preview |
 | `npm run build:portable` | Đóng gói bản HTML đơn tệp chạy offline (`dist-portable/index.html`) |

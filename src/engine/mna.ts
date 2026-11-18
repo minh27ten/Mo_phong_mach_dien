@@ -332,6 +332,7 @@ function solveSingleFrequencyMna(
       sensedIds.has(el.id) &&
       (el.type === 'RESISTOR' ||
         el.type === 'CAPACITOR' ||
+        el.type === 'IMPEDANCE' ||
         el.type === 'I_SRC' ||
         el.type === 'VCCS' ||
         el.type === 'CCCS')
@@ -417,6 +418,14 @@ function solveSingleFrequencyMna(
         const n = getPinNode(el.id, '2');
         const R = Math.max(1e-9, el.resistance ?? 100);
         stampConductance(A, p, n, new Complex(1 / R, 0));
+        break;
+      }
+      case 'IMPEDANCE': {
+        const p = getEffectivePin1(el, '1');
+        const n = getPinNode(el.id, '2');
+        const zRaw = toComplex(el.impedance, 40, 30);
+        const Z = isDc ? new Complex(zRaw.re, 0) : zRaw;
+        stampImpedance(A, p, n, Z);
         break;
       }
       case 'CAPACITOR': {
@@ -825,6 +834,13 @@ function extractElementBranchAtFreq(
       const I = U.scale(1 / R);
       return { U, I, S: U.mul(I.conj()) };
     }
+    case 'IMPEDANCE': {
+      const U = getPinV('1').sub(getPinV('2'));
+      const zRaw = toComplex(el.impedance, 40, 30);
+      const Z = isDc ? new Complex(zRaw.re, 0) : zRaw;
+      const I = branchCurrentFromImpedance(U, Z);
+      return { U, I, S: U.mul(I.conj()) };
+    }
     case 'CAPACITOR': {
       const U = getPinV('1').sub(getPinV('2'));
       const I = isDc ? Complex.zero() : U.mul(new Complex(0, omega * (el.capacitance ?? 1e-6)));
@@ -1198,7 +1214,11 @@ function runTransientSimulation(
       }
     } else if (
       sensedIds.has(el.id) &&
-      (el.type === 'RESISTOR' || el.type === 'I_SRC' || el.type === 'VCCS' || el.type === 'CCCS')
+      (el.type === 'RESISTOR' ||
+        el.type === 'IMPEDANCE' ||
+        el.type === 'I_SRC' ||
+        el.type === 'VCCS' ||
+        el.type === 'CCCS')
     ) {
       internalNodes.set(el.id, { sense: allocNode() });
       const idx = registerAux(el.id, 'sense');
@@ -1281,7 +1301,7 @@ function runTransientSimulation(
           : 50;
   const omegaRef = 2 * Math.PI * fRef;
 
-  interface ThreePhaseCompanionBranch {
+  interface ReactiveCompanionBranch {
     id: string;
     p: number;
     n: number;
@@ -1291,39 +1311,55 @@ function runTransientSimulation(
   }
 
   let hasReactiveThreePhase = false;
-  const makeTpBranch = (id: string, p: number, n: number, z: Complex): ThreePhaseCompanionBranch => {
+  let hasReactiveImpedance = false;
+  const makeCompanionBranch = (
+    id: string,
+    p: number,
+    n: number,
+    z: Complex,
+    sourceGroup: 'TP' | 'IMP',
+    minR = 1e-6,
+  ): ReactiveCompanionBranch => {
     if (z.im > 1e-9) {
-      hasReactiveThreePhase = true;
+      if (sourceGroup === 'TP') hasReactiveThreePhase = true;
+      else hasReactiveImpedance = true;
       const L = z.im / omegaRef;
       const reactR = L / actualDt;
       const gEq = 1 / Math.max(1e-9, Math.max(0, z.re) + reactR);
       return { id, p, n, kind: 'L', gEq, reactR };
     }
     if (z.im < -1e-9) {
-      hasReactiveThreePhase = true;
+      if (sourceGroup === 'TP') hasReactiveThreePhase = true;
+      else hasReactiveImpedance = true;
       const C = 1 / (omegaRef * Math.abs(z.im));
       const reactR = actualDt / C;
       const gEq = 1 / Math.max(1e-9, Math.max(0, z.re) + reactR);
       return { id, p, n, kind: 'C', gEq, reactR };
     }
-    return { id, p, n, kind: 'R', gEq: 1 / Math.max(1e-6, z.re), reactR: 0 };
+    return { id, p, n, kind: 'R', gEq: 1 / Math.max(minR, z.re), reactR: 0 };
   };
 
-  const tpBranchesByEl = new Map<string, ThreePhaseCompanionBranch[]>();
+  const tpBranchesByEl = new Map<string, ReactiveCompanionBranch[]>();
+  const impBranchByEl = new Map<string, ReactiveCompanionBranch>();
   const prevTpState = new Map<string, number>();
   const lastTpCurrent = new Map<string, number>();
 
   for (const el of elements) {
-    if (el.type === 'THREE_PHASE_LINE') {
+    if (el.type === 'IMPEDANCE') {
+      const z = toComplex(el.impedance, 40, 30);
+      const p = internalNodes.get(el.id)?.sense ?? getPinNode(el.id, '1');
+      const n = getPinNode(el.id, '2');
+      impBranchByEl.set(el.id, makeCompanionBranch(el.id, p, n, z, 'IMP', 1e-9));
+    } else if (el.type === 'THREE_PHASE_LINE') {
       const zd = toComplex(el.lineZ, 1.5, 3.0);
       const zn = toComplex(el.lineZn, 2.0, 1.0);
-      const branches: ThreePhaseCompanionBranch[] = [
-        makeTpBranch(`${el.id}:A`, getPinNode(el.id, 'A1'), getPinNode(el.id, 'A2'), zd),
-        makeTpBranch(`${el.id}:B`, getPinNode(el.id, 'B1'), getPinNode(el.id, 'B2'), zd),
-        makeTpBranch(`${el.id}:C`, getPinNode(el.id, 'C1'), getPinNode(el.id, 'C2'), zd),
+      const branches: ReactiveCompanionBranch[] = [
+        makeCompanionBranch(`${el.id}:A`, getPinNode(el.id, 'A1'), getPinNode(el.id, 'A2'), zd, 'TP'),
+        makeCompanionBranch(`${el.id}:B`, getPinNode(el.id, 'B1'), getPinNode(el.id, 'B2'), zd, 'TP'),
+        makeCompanionBranch(`${el.id}:C`, getPinNode(el.id, 'C1'), getPinNode(el.id, 'C2'), zd, 'TP'),
       ];
       if (el.hasNeutral !== false) {
-        branches.push(makeTpBranch(`${el.id}:N`, getPinNode(el.id, 'N1'), getPinNode(el.id, 'N2'), zn));
+        branches.push(makeCompanionBranch(`${el.id}:N`, getPinNode(el.id, 'N1'), getPinNode(el.id, 'N2'), zn, 'TP'));
       }
       tpBranchesByEl.set(el.id, branches);
     } else if (el.type === 'THREE_PHASE_LOAD') {
@@ -1337,15 +1373,15 @@ function runTransientSimulation(
         const nStar =
           el.loadNeutralConnected === false ? internalNodes.get(el.id)!.nstar : getPinNode(el.id, 'N');
         tpBranchesByEl.set(el.id, [
-          makeTpBranch(`${el.id}:A`, aN, nStar, za),
-          makeTpBranch(`${el.id}:B`, bN, nStar, zb),
-          makeTpBranch(`${el.id}:C`, cN, nStar, zc),
+          makeCompanionBranch(`${el.id}:A`, aN, nStar, za, 'TP'),
+          makeCompanionBranch(`${el.id}:B`, bN, nStar, zb, 'TP'),
+          makeCompanionBranch(`${el.id}:C`, cN, nStar, zc, 'TP'),
         ]);
       } else {
         tpBranchesByEl.set(el.id, [
-          makeTpBranch(`${el.id}:AB`, aN, bN, za),
-          makeTpBranch(`${el.id}:BC`, bN, cN, zb),
-          makeTpBranch(`${el.id}:CA`, cN, aN, zc),
+          makeCompanionBranch(`${el.id}:AB`, aN, bN, za, 'TP'),
+          makeCompanionBranch(`${el.id}:BC`, bN, cN, zb, 'TP'),
+          makeCompanionBranch(`${el.id}:CA`, cN, aN, zc, 'TP'),
         ]);
       }
     }
@@ -1357,8 +1393,14 @@ function runTransientSimulation(
       text: `Mô phỏng quá độ đã quy đổi phần tử 3 pha có điện kháng (X ≠ 0) sang phần tử R-L/R-C tương đương tại tần số tham chiếu ${fRef} Hz.`,
     });
   }
+  if (hasReactiveImpedance) {
+    diagnostics.push({
+      level: 'info',
+      text: `Mô phỏng quá độ đã quy đổi phần tử tổng trở Z có điện kháng (X ≠ 0) sang nhánh R-L/R-C tương đương tại tần số tham chiếu ${fRef} Hz.`,
+    });
+  }
 
-  const getTpIHist = (br: ThreePhaseCompanionBranch): number => {
+  const getTpIHist = (br: ReactiveCompanionBranch): number => {
     const prev = prevTpState.get(br.id) ?? 0;
     if (br.kind === 'L') return br.reactR * br.gEq * prev;
     if (br.kind === 'C') return -br.gEq * prev;
@@ -1441,6 +1483,19 @@ function runTransientSimulation(
           const p = getEffPin1(el, '1');
           const n = getPinNode(el.id, '2');
           stampCondR(A, p, n, 1 / Math.max(1e-9, el.resistance ?? 100));
+          break;
+        }
+        case 'IMPEDANCE': {
+          getEffPin1(el, '1');
+          const br = impBranchByEl.get(el.id);
+          if (br) {
+            const iHist = getTpIHist(br);
+            stampCondR(A, br.p, br.n, br.gEq);
+            if (iHist !== 0) {
+              addB(b, br.p, -iHist);
+              addB(b, br.n, iHist);
+            }
+          }
           break;
         }
         case 'CAPACITOR': {
@@ -1696,16 +1751,20 @@ function runTransientSimulation(
       const idx = nodeIdToIdx.get(nid) ?? -1;
       nodeVoltages[nid].push(getV(idx));
     }
-    for (const branches of tpBranchesByEl.values()) {
-      for (const br of branches) {
-        const iBr = br.gEq * (getV(br.p) - getV(br.n)) + getTpIHist(br);
-        lastTpCurrent.set(br.id, iBr);
-        if (br.kind === 'L') {
-          prevTpState.set(br.id, iBr);
-        } else if (br.kind === 'C') {
-          prevTpState.set(br.id, (prevTpState.get(br.id) ?? 0) + br.reactR * iBr);
-        }
+    const updateCompanionBranch = (br: ReactiveCompanionBranch) => {
+      const iBr = br.gEq * (getV(br.p) - getV(br.n)) + getTpIHist(br);
+      lastTpCurrent.set(br.id, iBr);
+      if (br.kind === 'L') {
+        prevTpState.set(br.id, iBr);
+      } else if (br.kind === 'C') {
+        prevTpState.set(br.id, (prevTpState.get(br.id) ?? 0) + br.reactR * iBr);
       }
+    };
+    for (const branches of tpBranchesByEl.values()) {
+      for (const br of branches) updateCompanionBranch(br);
+    }
+    for (const br of impBranchByEl.values()) {
+      updateCompanionBranch(br);
     }
 
     for (const el of elements) {
@@ -1721,6 +1780,9 @@ function runTransientSimulation(
       } else if (el.type === 'RESISTOR') {
         u = getV(getPinNode(el.id, '1')) - getV(getPinNode(el.id, '2'));
         iVal = u / Math.max(1e-9, el.resistance ?? 100);
+      } else if (el.type === 'IMPEDANCE') {
+        u = getV(getPinNode(el.id, '1')) - getV(getPinNode(el.id, '2'));
+        iVal = lastTpCurrent.get(el.id) ?? 0;
       } else if (el.type === 'CAPACITOR') {
         u = getV(getPinNode(el.id, '1')) - getV(getPinNode(el.id, '2'));
         if (isT0) {
@@ -1973,6 +2035,15 @@ export function runSimulation(
         text: 'Chế độ DC chỉ giải thành phần một chiều (0 Hz); các thành phần xoay chiều (AC/sóng hài) tạm thời được triệt tiêu.',
       });
     }
+    const hasReactiveZInDc = state.elements.some(
+      (el) => el.type === 'IMPEDANCE' && Math.abs(el.impedance?.im ?? 0) > 1e-12,
+    );
+    if (hasReactiveZInDc) {
+      diagnostics.push({
+        level: 'info',
+        text: 'Chế độ DC chỉ xét phần thực R của tổng trở Z (bỏ qua phần ảo jX). Chuyển sang chế độ Xoay chiều (AC) để mô phỏng tổng trở phức.',
+      });
+    }
   } else {
     for (const el of state.elements) {
       if (el.type === 'V_SRC' || el.type === 'I_SRC') {
@@ -2003,6 +2074,7 @@ export function runSimulation(
 
   if (mode === 'AC' && acFreqs.length > 1) {
     const hasStaticReactiveBlock = state.elements.some((el) => {
+      if (el.type === 'IMPEDANCE') return Math.abs(el.impedance?.im ?? 0) > 1e-12;
       if (el.type === 'ONE_PORT') return Math.abs(el.onePortZ?.im ?? 0) > 1e-12;
       if (el.type === 'TWO_PORT') {
         return [el.m11, el.m12, el.m21, el.m22].some((m) => Math.abs(m?.im ?? 0) > 1e-12);
@@ -2025,7 +2097,7 @@ export function runSimulation(
     if (hasStaticReactiveBlock) {
       diagnostics.push({
         level: 'warning',
-        text: 'Mạch có phần tử tổng trở R + jX tĩnh (một cửa/hai cửa/3 pha): phần ảo jX giữ nguyên giá trị theo thiết lập khi xếp chồng nhiều tần số AC.',
+        text: 'Mạch có phần tử tổng trở R + jX tĩnh (tổng trở Z/một cửa/hai cửa/3 pha): phần ảo jX giữ nguyên giá trị theo thiết lập khi xếp chồng nhiều tần số AC.',
       });
     }
   }
@@ -2209,6 +2281,7 @@ export function runSimulation(
   const isPassiveNoCouplingTransfer = (t: CircuitElement['type']) =>
     t === 'RESISTOR' ||
     t === 'CAPACITOR' ||
+    t === 'IMPEDANCE' ||
     t === 'TWO_PORT' ||
     t === 'THREE_PHASE_LINE' ||
     t === 'THREE_PHASE_LOAD';

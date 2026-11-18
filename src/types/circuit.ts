@@ -5,6 +5,7 @@ export type ComponentType =
   | 'RESISTOR'
   | 'CAPACITOR'
   | 'INDUCTOR'
+  | 'IMPEDANCE'
   | 'MUTUAL'
   | 'VCVS'
   | 'CCVS'
@@ -63,10 +64,11 @@ export interface CircuitElement {
   stepFinal?: number;
   stepTime?: number;
 
-  // Phần tử thụ động (R, C, L)
+  // Phần tử thụ động (R, C, L, Z)
   resistance?: number;
   capacitance?: number;
   inductance?: number;
+  impedance?: ComplexInput; // Z = R + jX (Ω)
   initialVoltage?: number; // u_C(0)
   initialCurrent?: number; // i_L(0)
 

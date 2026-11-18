@@ -177,6 +177,20 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const [resultInspectTarget, setResultInspectTarget] = useState<
     { kind: 'NODE' | 'ELEMENT'; id: string } | null
   >(null);
+  const [impInputMode, setImpInputMode] = useState<'RECT' | 'POLAR'>('RECT');
+  const [impPolarDraft, setImpPolarDraft] = useState<{
+    elId: string;
+    srcRe: number;
+    srcIm: number;
+    mag: number;
+    deg: number;
+  }>({
+    elId: '',
+    srcRe: 40,
+    srcIm: 30,
+    mag: 50,
+    deg: 36.86989765,
+  });
 
   const activeFrequencies = useMemo(() => {
     const freqs = new Set<number>();
@@ -560,6 +574,105 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             />
           </div>
         )}
+
+        {el.type === 'IMPEDANCE' && (() => {
+          const zRect = el.impedance ?? { re: 40, im: 30 };
+          const zC = new Complex(zRect.re, zRect.im);
+          const zMag = zC.mag();
+          const zDeg = zC.deg();
+          const yC = zMag >= 1e-12 ? zC.inv() : null;
+          const curPolar =
+            impPolarDraft.elId === el.id &&
+            impPolarDraft.srcRe === zRect.re &&
+            impPolarDraft.srcIm === zRect.im
+              ? impPolarDraft
+              : {
+                  elId: el.id,
+                  srcRe: zRect.re,
+                  srcIm: zRect.im,
+                  mag: Number(zMag.toPrecision(10)),
+                  deg: Number(zDeg.toPrecision(10)),
+                };
+          const handleImpModeChange = (nextMode: 'RECT' | 'POLAR') => {
+            if (nextMode === 'POLAR') {
+              setImpPolarDraft({
+                elId: el.id,
+                srcRe: zRect.re,
+                srcIm: zRect.im,
+                mag: Number(zMag.toPrecision(10)),
+                deg: Number(zDeg.toPrecision(10)),
+              });
+            }
+            setImpInputMode(nextMode);
+          };
+          const handlePolarUpdate = (nextMag: number, nextDeg: number) => {
+            const safeMag = Math.max(0, nextMag);
+            const c = Complex.fromPolar(safeMag, nextDeg);
+            const clean = (v: number) => (Math.abs(v) < 1e-12 ? 0 : Number(v.toPrecision(12)));
+            const nextRe = clean(c.re);
+            const nextIm = clean(c.im);
+            setImpPolarDraft({ elId: el.id, srcRe: nextRe, srcIm: nextIm, mag: safeMag, deg: nextDeg });
+            update({ impedance: { re: nextRe, im: nextIm } });
+          };
+          const kindLabel =
+            zRect.im > 1e-9
+              ? 'Tính cảm (R − L)'
+              : zRect.im < -1e-9
+                ? 'Tính dung (R − C)'
+                : 'Thuần trở (R)';
+
+          return (
+            <div className="space-y-3 p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">
+              <SegmentedField
+                label="Dạng nhập tổng trở"
+                value={impInputMode}
+                options={[
+                  { value: 'RECT', label: 'Đại số (R + jX)' },
+                  { value: 'POLAR', label: 'Cực (|Z| ∠ φ°)' },
+                ]}
+                onChange={handleImpModeChange}
+              />
+
+              {impInputMode === 'RECT' ? (
+                <ComplexField
+                  label="Tổng trở phức Z = R + jX"
+                  unit="Ω"
+                  value={zRect}
+                  onChange={(v) => update({ impedance: v })}
+                />
+              ) : (
+                <div className="grid grid-cols-2 gap-2.5">
+                  <NumField
+                    label="Mô-đun |Z|"
+                    unit="Ω"
+                    min={0}
+                    value={curPolar.mag}
+                    onChange={(m) => handlePolarUpdate(m, curPolar.deg)}
+                  />
+                  <NumField
+                    label="Góc tổng trở φ"
+                    unit="°"
+                    value={curPolar.deg}
+                    onChange={(d) => handlePolarUpdate(curPolar.mag, d)}
+                  />
+                </div>
+              )}
+
+              <div className="rounded-lg bg-white border border-slate-200/80 px-2.5 py-2 space-y-1 text-[11px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500">Tính chất nhánh</span>
+                  <span className="font-medium text-blue-700">{kindLabel}</span>
+                </div>
+                <div className="font-mono tabular-nums text-slate-800">
+                  Z = {zC.formatRect(3)} Ω ({zC.formatPolar(3)} Ω)
+                </div>
+                <div className="font-mono tabular-nums text-slate-500">
+                  Y = {yC ? `${yC.formatRect(4)} S` : '∞ (ngắn mạch)'}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {el.type === 'MUTUAL' && (
           <div className="space-y-3 p-3 rounded-xl bg-slate-50/70 border border-slate-200/70">

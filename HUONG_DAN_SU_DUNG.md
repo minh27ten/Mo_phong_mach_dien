@@ -9,7 +9,7 @@ Tài liệu hướng dẫn chi tiết cách vẽ sơ đồ, thiết lập thông
 1. [Làm quen giao diện làm việc](#1-làm-quen-giao-diện-làm-việc)
 2. [Vẽ sơ đồ & nối dây chuẩn kỹ thuật](#2-vẽ-sơ-đồ--nối-dây-chuẩn-kỹ-thuật)
 3. [Bảng phím tắt thao tác nhanh](#3-bảng-phím-tắt-thao-tác-nhanh)
-4. [Danh mục 16+GND phần tử & ý nghĩa thông số](#4-danh-mục-16gnd-phần-tử--ý-nghĩa-thông-số)
+4. [Danh mục 17+GND phần tử & ý nghĩa thông số](#4-danh-mục-17gnd-phần-tử--ý-nghĩa-thông-số)
 5. [4 Chế độ mô phỏng & đọc kết quả](#5-4-chế-độ-mô-phỏng--đọc-kết-quả)
 6. [Trình trích xuất Thévenin / Norton & Mạng 2 cửa](#6-trình-trích-xuất-thévenin--norton--mạng-2-cửa)
 7. [Mô phỏng hệ thống Điện 3 Pha (Y / Δ & lệch trung tính)](#7-mô-phỏng-hệ-thống-điện-3-pha-y--δ--lệch-trung-tính)
@@ -23,7 +23,7 @@ Tài liệu hướng dẫn chi tiết cách vẽ sơ đồ, thiết lập thông
 Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
 - **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
-- **Thư viện linh kiện (Cột trái):** Chứa 16 phần tử chuyên ngành điện + ký hiệu Đất (`GND`), có ô tìm kiếm nhanh theo tên hoặc ký hiệu (`R`, `C`, `op-amp`, `3 pha`, ...). Nhấp nút thu gọn ở góc trên bên trái thanh công cụ nếu muốn mở rộng không gian vẽ.
+- **Thư viện linh kiện (Cột trái):** Chứa 17 phần tử chuyên ngành điện + ký hiệu Đất (`GND`), có ô tìm kiếm nhanh theo tên hoặc ký hiệu (`R`, `Z`, `C`, `op-amp`, `3 pha`, ...). Nhấp nút thu gọn ở góc trên bên trái thanh công cụ nếu muốn mở rộng không gian vẽ.
 - **Bản vẽ sơ đồ (Giữa):** Lưới tọa độ `20 px` giúp căn thẳng hàng linh kiện và dây dẫn, kèm công tắc **Hiển thị số đo** (hiển thị điện áp nút `N...` và dòng nhánh `I=...` trực tiếp trên mạch) và cụm thu phóng (`+`, `−`, *Khớp khung nhìn*).
 - **Bảng Thông số & Kết quả (Cột phải):** Gồm 4 thẻ:
   - **Thông số:** Chỉnh sửa thuộc tính của phần tử hoặc dây đang chọn.
@@ -70,7 +70,7 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
 ---
 
-## 4. Danh mục 16+GND phần tử & ý nghĩa thông số
+## 4. Danh mục 17+GND phần tử & ý nghĩa thông số
 
 ### Nguồn & Điểm chuẩn
 - **Đất (`GND`):** Điểm tham chiếu điện thế `0 V` (Nút `0`). Nếu sơ đồ chưa đặt `GND`, bộ giải sẽ tự chọn một điểm chuẩn mặc định và thông báo trong chẩn đoán.
@@ -86,6 +86,7 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 - **Điện trở (`RESISTOR`):** Giá trị `R` ($\Omega$, tối thiểu $10^{-6}\ \Omega$).
 - **Tụ điện (`CAPACITOR`):** Điện dung `C` (F) và sơ kiện điện áp ban đầu `u_C(0)` (V) giữa chân 1 (`+`) và chân 2 (`−`).
 - **Cuộn cảm (`INDUCTOR`):** Độ tự cảm `L` (H) và sơ kiện dòng điện ban đầu `i_L(0)` (A) đi từ chân 1 vào chân 2.
+- **Tổng trở phức (`IMPEDANCE` / `Z`):** Nhánh tổng trở phức $Z = R + jX$ ($\Omega$) gộp sẵn các thành phần R, L, C trong một nhánh bài tập; hỗ trợ nhập cả dạng đại số (`R + jX`) lẫn dạng cực (`|Z| ∠ φ°`), đồng thời tự hiển thị tổng dẫn $Y = 1/Z$ và tính chất nhánh (tính cảm $X > 0$, tính dung $X < 0$, thuần trở $X = 0$). Trong chế độ **Quá độ**, các nhánh có $X \neq 0$ được tự động quy đổi sang nhánh `R-L` hoặc `R-C` tương đương tại tần số tham chiếu của mạch.
 - **Hỗ cảm (`MUTUAL`):** Ghép từ thông giữa hai cuộn dây `L1` và `L2` đã có trên sơ đồ với hệ số hỗ cảm `M` (H) và chấm cực cùng tính (`Cùng cực 1–1` hoặc `Ngược cực 1–2`). Hỗ trợ đầy đủ cả **AC Phasor** lẫn **Quá độ**.
 
 ### Nguồn phụ thuộc & Op-Amp lý tưởng

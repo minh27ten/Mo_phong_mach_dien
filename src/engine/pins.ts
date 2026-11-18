@@ -68,6 +68,15 @@ export const COMPONENT_CATALOG: ComponentMeta[] = [
     description: 'Phần tử tự cảm (H) kèm sơ kiện i_L(0) và cực tính.',
   },
   {
+    type: 'IMPEDANCE',
+    label: 'Tổng trở phức (Z)',
+    shortLabel: 'Tổng trở Z',
+    category: 'passive',
+    categoryLabel: 'Phần tử thụ động & Hỗ cảm',
+    prefix: 'Z',
+    description: 'Nhánh tổng trở phức Z = R + jX (Ω) gộp sẵn R, L, C.',
+  },
+  {
     type: 'MUTUAL',
     label: 'Hỗ cảm (M)',
     shortLabel: 'Hỗ cảm M',
@@ -208,6 +217,7 @@ export function getLocalPins(el: Pick<CircuitElement, 'type' | 'opampInvertPins'
     case 'RESISTOR':
     case 'CAPACITOR':
     case 'INDUCTOR':
+    case 'IMPEDANCE':
     case 'ONE_PORT':
       return [
         { id: '1', label: '1', dx: -40, dy: 0 },
@@ -368,6 +378,8 @@ export function createDefaultElement(
       return { ...base, capacitance: 100e-6, initialVoltage: 0 };
     case 'INDUCTOR':
       return { ...base, inductance: 0.1, initialCurrent: 0 };
+    case 'IMPEDANCE':
+      return { ...base, impedance: { re: 40, im: 30 } };
     case 'MUTUAL': {
       const inductors = existingElements.filter((e) => e.type === 'INDUCTOR');
       return {

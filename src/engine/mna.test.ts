@@ -7,6 +7,7 @@ import {
   getSourceHarmonicSummary,
   runSimulation,
 } from './mna';
+import { createDefaultElement, isValidComponentType } from './pins';
 import { CIRCUIT_PRESETS } from '../data/presets';
 import { CircuitState } from '../types/circuit';
 
@@ -582,6 +583,170 @@ test('Mixed-source preset works in DC, AC, and TRANSIENT modes and preserves thr
   assert.deepEqual(tpMixedRes.frequenciesHz, [0, 50]);
   const t3 = tpMixedRes.elements.find((e) => e.elementId === 't3')!;
   assert.ok(t3.threePhaseDetails, 'threePhaseDetails must be preserved in multi-frequency circuits');
+});
+
+test('Complex Impedance (Z): AC series-parallel analysis, power balance, DC & Transient', () => {
+  // E1 = 100∠0° Vrms @ 50Hz -> Z1 = 10 + j20 Ω -> nút B -> song song Z2 = 30 - j40 Ω và Z3 = j25 Ω -> GND
+  // Giải tích: I1 = 0.75 - j1.5 A, V_B = 62.5∠0° V, I2 = 0.75 + j1.0 A (1.25 A), I3 = -j2.5 A (2.5 A)
+  // P_tổng = 75 W, Q_tổng = 150 var
+  const state: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 100, y: 200, rotation: 0, waveform: 'AC', acValue: 100, amplitudeType: 'RMS', freqHz: 50, phaseDeg: 0 },
+      { id: 'z1', name: 'Z1', type: 'IMPEDANCE', x: 200, y: 160, rotation: 0, impedance: { re: 10, im: 20 } },
+      { id: 'z2', name: 'Z2', type: 'IMPEDANCE', x: 280, y: 200, rotation: 90, impedance: { re: 30, im: -40 } },
+      { id: 'z3', name: 'Z3', type: 'IMPEDANCE', x: 360, y: 200, rotation: 90, impedance: { re: 0, im: 25 } },
+      { id: 'g', name: 'GND', type: 'GND', x: 100, y: 260, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 100, y: 160 }, { x: 160, y: 160 }] },
+      { id: 'w2', points: [{ x: 240, y: 160 }, { x: 280, y: 160 }, { x: 360, y: 160 }] },
+      { id: 'w3', points: [{ x: 100, y: 240 }, { x: 280, y: 240 }, { x: 360, y: 240 }] },
+    ],
+  };
+
+  const acRes = runSimulation(state, 'AC');
+  assert.equal(acRes.success, true);
+
+  const z1 = acRes.elements.find((e) => e.elementId === 'z1')!;
+  const z2 = acRes.elements.find((e) => e.elementId === 'z2')!;
+  const z3 = acRes.elements.find((e) => e.elementId === 'z3')!;
+  const e1 = acRes.elements.find((e) => e.elementId === 'e1')!;
+
+  approx(z1.currentRms, Math.hypot(0.75, -1.5), 1e-4, '|I_Z1|');
+  approx(z1.currentPhasorDeg!, (Math.atan2(-1.5, 0.75) * 180) / Math.PI, 1e-2, 'angle(I_Z1)');
+  approx(z2.voltageRms, 62.5, 1e-4, 'V_B');
+  approx(z2.voltagePhasorDeg!, 0, 1e-2, 'angle(V_B)');
+  approx(z2.currentRms, 1.25, 1e-4, '|I_Z2|');
+  approx(z3.currentRms, 2.5, 1e-4, '|I_Z3|');
+  approx(z3.currentPhasorDeg!, -90, 1e-2, 'angle(I_Z3)');
+
+  approx(z1.pWatts, 28.125, 1e-3, 'P_Z1');
+  approx(z1.qVars, 56.25, 1e-3, 'Q_Z1');
+  approx(z2.pWatts, 46.875, 1e-3, 'P_Z2');
+  approx(z2.qVars, -62.5, 1e-3, 'Q_Z2');
+  approx(z3.pWatts, 0, 1e-3, 'P_Z3');
+  approx(z3.qVars, 156.25, 1e-3, 'Q_Z3');
+  approx(e1.pWatts, -75, 1e-3, 'P_E1');
+  approx(e1.qVars, -150, 1e-3, 'Q_E1');
+  approx(acRes.powerBalance!.pGenerated, 75, 1e-3, 'Z P_gen');
+  approx(acRes.powerBalance!.pConsumed, 75, 1e-3, 'Z P_cons');
+  approx(acRes.powerBalance!.qGenerated, 212.5, 1e-2, 'Z Q_gen (source + cap)');
+  approx(acRes.powerBalance!.qConsumed, 212.5, 1e-2, 'Z Q_cons');
+
+  // DC mode: R_Z3 = 0 => V_B ~ 0, I_Z1 ~ 10 A (DC source = 0 -> all 0), với DC info diagnostic
+  const dcRes = runSimulation(state, 'DC');
+  assert.equal(dcRes.success, true);
+  assert.ok(dcRes.diagnostics.some((d) => d.level === 'info' && d.text.includes('Z')));
+
+  // Transient mode converges to AC steady-state RMS
+  const trRes = runSimulation(state, 'TRANSIENT', { dt: 0.0001, tEnd: 0.4 });
+  assert.equal(trRes.success, true);
+  assert.ok(trRes.diagnostics.some((d) => d.level === 'info' && d.text.includes('50 Hz')));
+  const times = trRes.transient!.times;
+  const steadyIdx = times.findIndex((t) => t >= 0.36);
+  const segRms = (arr: number[]) => {
+    const seg = arr.slice(steadyIdx);
+    return Math.sqrt(seg.reduce((s, v) => s + v * v, 0) / seg.length);
+  };
+  approx(segRms(trRes.transient!.elementCurrents['z1']), z1.currentRms, 0.05, 'Transient Z1 I_rms');
+  approx(segRms(trRes.transient!.elementVoltages['z2']), z2.voltageRms, 0.8, 'Transient Z2 V_rms');
+  approx(segRms(trRes.transient!.elementCurrents['z2']), z2.currentRms, 0.05, 'Transient Z2 I_rms');
+});
+
+test('Complex Impedance (Z): CCCS/CCVS sensing (AC & Transient), zero-impedance short, and catalog', () => {
+  assert.equal(isValidComponentType('IMPEDANCE'), true);
+  const defZ = createDefaultElement('IMPEDANCE', 43, 57, []);
+  assert.equal(defZ.name, 'Z1');
+  assert.equal(defZ.x, 40);
+  assert.equal(defZ.y, 60);
+  assert.deepEqual(defZ.impedance, { re: 40, im: 30 });
+
+  // E1 = 50∠0° Vrms @ 50Hz -> Z1 = 3 + j4 Ω -> Z_short = 0 + j0 Ω -> GND => I_Z1 = 6 - j8 A (|I| = 10 A)
+  // CCCS (beta = 2, cảm biến I_Z1) cấp cho Z2 = 5 + j0 Ω => V_Z2 = 20∠-53.13° * 5 = 100 Vrms
+  // CCVS (r = 10 Ω, cảm biến I_Z1) cấp cho Z3 = 8 - j6 Ω => |I_Z3| = (10 * 10) / 10 = 10 A
+  const state: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 0, y: 40, rotation: 0, waveform: 'AC', acValue: 50, amplitudeType: 'RMS', freqHz: 50, phaseDeg: 0 },
+      { id: 'z1', name: 'Z1', type: 'IMPEDANCE', x: 80, y: 0, rotation: 0, impedance: { re: 3, im: 4 } },
+      { id: 'z0', name: 'Z0', type: 'IMPEDANCE', x: 160, y: 40, rotation: 90, impedance: { re: 0, im: 0 } },
+      { id: 'jb', name: 'Jb1', type: 'CCCS', x: 240, y: 40, rotation: 0, gain: 2, ctrlElementId: 'z1' },
+      { id: 'z2', name: 'Z2', type: 'IMPEDANCE', x: 320, y: 40, rotation: 90, impedance: { re: 5, im: 0 } },
+      { id: 'er', name: 'Er1', type: 'CCVS', x: 400, y: 40, rotation: 0, gain: 10, ctrlElementId: 'z1' },
+      { id: 'z3', name: 'Z3', type: 'IMPEDANCE', x: 480, y: 40, rotation: 90, impedance: { re: 8, im: -6 } },
+      { id: 'g', name: 'GND', type: 'GND', x: 0, y: 100, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 0, y: 0 }, { x: 40, y: 0 }] },
+      { id: 'w2', points: [{ x: 120, y: 0 }, { x: 160, y: 0 }] },
+      { id: 'w3', points: [{ x: 0, y: 80 }, { x: 160, y: 80 }, { x: 240, y: 80 }, { x: 320, y: 80 }, { x: 400, y: 80 }, { x: 480, y: 80 }] },
+      { id: 'w4', points: [{ x: 240, y: 0 }, { x: 320, y: 0 }] },
+      { id: 'w5', points: [{ x: 400, y: 0 }, { x: 480, y: 0 }] },
+    ],
+  };
+
+  const acRes = runSimulation(state, 'AC');
+  assert.equal(acRes.success, true);
+  approx(acRes.elements.find((e) => e.elementId === 'z1')!.currentRms, 10, 1e-4, 'Sensed Z1 I_rms');
+  approx(acRes.elements.find((e) => e.elementId === 'z0')!.voltageRms, 0, 1e-5, 'Zero-impedance Z0 V_rms');
+  approx(acRes.elements.find((e) => e.elementId === 'z2')!.voltageRms, 100, 1e-3, 'CCCS-driven Z2 V_rms');
+  approx(acRes.elements.find((e) => e.elementId === 'z3')!.currentRms, 10, 1e-3, 'CCVS-driven Z3 I_rms');
+
+  const trRes = runSimulation(state, 'TRANSIENT', { dt: 0.0001, tEnd: 0.14 });
+  assert.equal(trRes.success, true);
+  const steadyIdx = trRes.transient!.times.findIndex((t) => t >= 0.12);
+  const segRms = (arr: number[]) => {
+    const seg = arr.slice(steadyIdx);
+    return Math.sqrt(seg.reduce((s, v) => s + v * v, 0) / seg.length);
+  };
+  approx(segRms(trRes.transient!.elementVoltages['z2']), 100, 1.5, 'Transient CCCS sensing Z1');
+  approx(segRms(trRes.transient!.elementCurrents['z3']), 10, 0.25, 'Transient CCVS sensing Z1');
+});
+
+test('Complex Impedance (Z): Thévenin / Norton & Two-Port [Z, Y, A] extraction', () => {
+  // Mạng hình T: Z1 = 10 + j10, Z2 = 20 - j10, nhánh rẽ Z3 = j20 (50 Hz)
+  // Z11 = 10 + j30, Z12 = Z21 = j20, Z22 = 20 + j10
+  // Khi cấp nguồn E1 = 100∠0° Vrms tại cửa 1:
+  // V_th(cửa 2) = 100 * (j20) / (10 + j30) = (2000j)*(10 - j30)/1000 = 60 + j20 V
+  // Z_th(cửa 2) = (20 - j10) + (10 + j10)*(j20)/(10 + j30) = 24 - j2 Ω
+  const teeZ: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 0, y: 40, rotation: 0, waveform: 'AC', acValue: 100, amplitudeType: 'RMS', freqHz: 50, phaseDeg: 0 },
+      { id: 'z1', name: 'Z1', type: 'IMPEDANCE', x: 80, y: 0, rotation: 0, impedance: { re: 10, im: 10 } },
+      { id: 'z3', name: 'Z3', type: 'IMPEDANCE', x: 140, y: 40, rotation: 90, impedance: { re: 0, im: 20 } },
+      { id: 'z2', name: 'Z2', type: 'IMPEDANCE', x: 200, y: 0, rotation: 0, impedance: { re: 20, im: -10 } },
+      { id: 'g', name: 'GND', type: 'GND', x: 0, y: 100, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 0, y: 0 }, { x: 40, y: 0 }] },
+      { id: 'w2', points: [{ x: 120, y: 0 }, { x: 140, y: 0 }, { x: 160, y: 0 }] },
+      { id: 'w3', points: [{ x: 0, y: 80 }, { x: 140, y: 80 }] },
+    ],
+  };
+
+  const sim = runSimulation(teeZ, 'AC');
+  const outNode = sim.nodeMap['z2:2'];
+  const th = extractTheveninNorton(teeZ, outNode, '0', 50);
+  assert.equal(th.success, true);
+  approx(th.vth.re, 60, 1e-3, 'Complex Tee Vth.re');
+  approx(th.vth.im, 20, 1e-3, 'Complex Tee Vth.im');
+  approx(th.zth.re, 24, 1e-3, 'Complex Tee Zth.re');
+  approx(th.zth.im, -2, 1e-3, 'Complex Tee Zth.im');
+
+  const passiveTee: CircuitState = {
+    elements: teeZ.elements.filter((e) => e.id !== 'e1'),
+    wires: teeZ.wires.filter((w) => w.id !== 'w1'),
+  };
+  const pSim = runSimulation(passiveTee, 'AC');
+  const p1 = pSim.nodeMap['z1:1'];
+  const p2 = pSim.nodeMap['z2:2'];
+  const tp = extractTwoPort(passiveTee, p1, '0', p2, '0', 50);
+  assert.equal(tp.success, true);
+  approx(tp.Z![0][0].re, 10, 1e-3, 'Z11.re');
+  approx(tp.Z![0][0].im, 30, 1e-3, 'Z11.im');
+  approx(tp.Z![0][1].re, 0, 1e-3, 'Z12.re');
+  approx(tp.Z![0][1].im, 20, 1e-3, 'Z12.im');
+  approx(tp.Z![1][1].re, 20, 1e-3, 'Z22.re');
+  approx(tp.Z![1][1].im, 10, 1e-3, 'Z22.im');
 });
 
 
