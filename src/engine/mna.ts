@@ -5,6 +5,9 @@ import {
   DiagnosticMessage,
   ElementBranchResult,
   HarmonicComponent,
+  MaxPowerConstraintMode,
+  MaxPowerResult,
+  MaxPowerSweepPoint,
   NodeVoltageResult,
   SimulationMode,
   SimulationResult,
@@ -14,6 +17,7 @@ import {
 } from '../types/circuit';
 import { Complex, solveLinearComplex, solveLinearReal } from './complex';
 import { buildNetlist, NetlistGraph } from './netlist';
+import { getElementWorldPins } from './pins';
 
 const G_MIN = 1e-12;
 const SQRT2 = Math.SQRT2;
@@ -231,6 +235,7 @@ function solveSingleFrequencyMna(
   mode: 'DC' | 'DC_SS' | 'AC',
   options?: {
     disableIndependentSources?: boolean;
+    excludeElementIds?: Set<string>;
     extraStamp?: (ctx: {
       A: Complex[][];
       b: Complex[];
@@ -246,6 +251,9 @@ function solveSingleFrequencyMna(
   sys?: MnaLinearSystem;
   nodeVoltages: Map<string, Complex>;
 } {
+  const activeElements = options?.excludeElementIds?.size
+    ? elements.filter((e) => !options.excludeElementIds!.has(e.id))
+    : elements;
   const realNodeIds = netlist.allNodeIds.filter((id) => id !== '0');
   const nodeIdToIdx = new Map<string, number>();
   nodeIdToIdx.set('0', -1);
@@ -256,7 +264,7 @@ function solveSingleFrequencyMna(
 
   // Xác định các phần tử cần biến dòng cảm biến (được CCVS / CCCS tham chiếu)
   const sensedIds = new Set<string>();
-  for (const el of elements) {
+  for (const el of activeElements) {
     if ((el.type === 'CCVS' || el.type === 'CCCS') && el.ctrlElementId) {
       sensedIds.add(el.ctrlElementId);
     }
@@ -278,7 +286,7 @@ function solveSingleFrequencyMna(
     return idx;
   };
 
-  for (const el of elements) {
+  for (const el of activeElements) {
     if (el.type === 'V_SRC' || el.type === 'VCVS' || el.type === 'CCVS') {
       const idx = registerAux(el.id, 'i');
       if (sensedIds.has(el.id)) senseBranchVar.set(el.id, idx);
@@ -388,7 +396,7 @@ function solveSingleFrequencyMna(
   const omega = 2 * Math.PI * targetFreqHz;
   const isDc = targetFreqHz === 0 || mode === 'DC' || mode === 'DC_SS';
 
-  for (const el of elements) {
+  for (const el of activeElements) {
     switch (el.type) {
       case 'GND':
         break;
@@ -2385,6 +2393,10 @@ export function extractTheveninNorton(
   nodeA: string,
   nodeB: string,
   freqHz: number,
+  options?: {
+    excludeElementIds?: Set<string>;
+    netlist?: NetlistGraph;
+  },
 ): TheveninNortonResult {
   if (nodeA === nodeB) {
     return {
@@ -2398,11 +2410,13 @@ export function extractTheveninNorton(
     };
   }
 
-  const netlist = buildNetlist(state.elements, state.wires);
+  const netlist = options?.netlist ?? buildNetlist(state.elements, state.wires);
   const mode = freqHz === 0 ? 'DC_SS' : 'AC';
 
   // Bước 1: Tính điện áp hở mạch Vth = Va - Vb khi mạch đang hoạt động
-  const openRes = solveSingleFrequencyMna(state.elements, netlist, freqHz, mode);
+  const openRes = solveSingleFrequencyMna(state.elements, netlist, freqHz, mode, {
+    excludeElementIds: options?.excludeElementIds,
+  });
   if (!openRes.success) {
     return {
       success: false,
@@ -2421,6 +2435,7 @@ export function extractTheveninNorton(
   // Bước 2: Triệt tiêu mọi nguồn độc lập, bơm dòng thử Itest = 1A từ nodeB sang nodeA
   const testRes = solveSingleFrequencyMna(state.elements, netlist, freqHz, mode, {
     disableIndependentSources: true,
+    excludeElementIds: options?.excludeElementIds,
     extraStamp: ({ b, getNodeIdx }) => {
       const ia = getNodeIdx(nodeA);
       const ib = getNodeIdx(nodeB);
@@ -2585,5 +2600,257 @@ export function extractTwoPort(
     Z: mapM(Z),
     Y: mapM(Y),
     A: mapM(A_mat),
+  };
+}
+
+/**
+ * Tìm tổng trở tải Z_opt cho bài toán mạng 1 cửa truyền công suất tác dụng cực đại (P_max),
+ * kèm mô phỏng MNA kiểm chứng trực tiếp trên toàn mạch và dữ liệu đường cong P theo R / |Z|.
+ */
+export function findMaxPowerImpedance(
+  state: CircuitState,
+  nodeA: string,
+  nodeB: string,
+  freqHz: number,
+  options?: {
+    constraintMode?: MaxPowerConstraintMode;
+    fixedX?: number;
+    fixedAngleDeg?: number;
+    excludeElementId?: string;
+  },
+): MaxPowerResult {
+  const constraintMode: MaxPowerConstraintMode = options?.constraintMode ?? 'CONJUGATE';
+  const makeError = (error: string, effA = nodeA, effB = nodeB): MaxPowerResult => ({
+    success: false,
+    error,
+    freqHz,
+    nodeA: effA,
+    nodeB: effB,
+    constraintMode,
+    vth: { re: 0, im: 0 },
+    zth: { re: 0, im: 0 },
+    zOpt: { re: 0, im: 0 },
+    pMax: 0,
+    pSimulated: 0,
+    qAtOpt: 0,
+    sAtOpt: 0,
+    iLoad: { re: 0, im: 0 },
+    uLoad: { re: 0, im: 0 },
+    powerFactor: 1,
+    theveninEfficiencyPct: 0,
+    sweepParamLabel: constraintMode === 'FIXED_ANGLE' ? '|Z_L| (Ω)' : 'R_L (Ω)',
+    optParam: 0,
+    sweepPoints: [],
+  });
+
+  const origNetlist = buildNetlist(state.elements, state.wires);
+  let effNodeA = nodeA;
+  let effNodeB = nodeB;
+  let excludeSet: Set<string> | undefined;
+  let warning: string | undefined;
+
+  if (options?.excludeElementId) {
+    const targetEl = state.elements.find((e) => e.id === options.excludeElementId);
+    if (!targetEl) {
+      return makeError('Không tìm thấy phần tử tải đã chọn trên sơ đồ.');
+    }
+    const pins = getElementWorldPins(targetEl);
+    if (pins.length !== 2) {
+      return makeError(`Phần tử ${targetEl.name} không phải phần tử 2 cực.`);
+    }
+    effNodeA = origNetlist.nodeMap[pins[0].key] ?? '0';
+    effNodeB = origNetlist.nodeMap[pins[1].key] ?? '0';
+    excludeSet = new Set([targetEl.id]);
+    const hasDependentSensor = state.elements.some(
+      (e) => (e.type === 'CCVS' || e.type === 'CCCS') && e.ctrlElementId === targetEl.id,
+    );
+    if (hasDependentSensor) {
+      warning = `Phần tử ${targetEl.name} đang được nguồn phụ thuộc cảm biến dòng; định lý Thévenin cắt nhánh tải có thể làm mất biến điều khiển.`;
+    }
+  }
+
+  if (effNodeA === effNodeB) {
+    return makeError('Hai cực của mạng 1 cửa phải thuộc hai nút khác nhau (đang bị nối chập).', effNodeA, effNodeB);
+  }
+
+  const th = extractTheveninNorton(state, effNodeA, effNodeB, freqHz, {
+    excludeElementIds: excludeSet,
+    netlist: origNetlist,
+  });
+  if (!th.success) {
+    return makeError(th.error ?? 'Không thể trích xuất mạng 1 cửa Thévenin.', effNodeA, effNodeB);
+  }
+
+  const magZthRaw = Math.hypot(th.zth.re, th.zth.im);
+  if (magZthRaw > 1e8) {
+    return makeError(
+      'Cặp nút (a, b) bị hở mạch hoặc cô lập với mạng 1 cửa (|Z_th| quá lớn), không thể truyền công suất hữu hạn.',
+      effNodeA,
+      effNodeB,
+    );
+  }
+
+  const Rth = Math.abs(th.zth.re) < 1e-10 ? 0 : th.zth.re;
+  const Xth = freqHz === 0 || Math.abs(th.zth.im) < 1e-10 ? 0 : th.zth.im;
+  if (Rth < -1e-7) {
+    return makeError(
+      `Điện trở tương đương R_th = ${Rth.toFixed(3)} Ω < 0 (do nguồn phụ thuộc tích cực): công suất trên tải thụ động R_L ≥ 0 không có cực đại hữu hạn.`,
+      effNodeA,
+      effNodeB,
+    );
+  }
+
+  let rOpt = 0;
+  let xOpt = 0;
+  let optParam = 0;
+  const sweepParamLabel = constraintMode === 'FIXED_ANGLE' ? '|Z_L| (Ω)' : 'R_L (Ω)';
+
+  if (constraintMode === 'CONJUGATE') {
+    if (Rth <= 1e-7) {
+      return makeError(
+        'Mạng 1 cửa có R_th ≈ 0 Ω (mạch nguồn lý tưởng không tổn hao): phối hợp liên hợp Z = −jX_th làm P → ∞. Hãy chọn chế độ Thuần trở R hoặc Cố định X.',
+        effNodeA,
+        effNodeB,
+      );
+    }
+    rOpt = Rth;
+    xOpt = -Xth;
+    optParam = rOpt;
+  } else if (constraintMode === 'PURE_RESISTIVE') {
+    const magZ = Math.hypot(Rth, Xth);
+    if (magZ <= 1e-7) {
+      return makeError('Tổng trở tương đương |Z_th| ≈ 0 Ω, công suất cực đại không hữu hạn.', effNodeA, effNodeB);
+    }
+    rOpt = magZ;
+    xOpt = 0;
+    optParam = rOpt;
+  } else if (constraintMode === 'FIXED_X') {
+    if (freqHz === 0) {
+      return makeError('Ở tần số 0 Hz (DC), thành phần phản kháng jX không tồn tại; hãy chọn chế độ Tự do / Thuần trở.', effNodeA, effNodeB);
+    }
+    const fixedX = Number.isFinite(options?.fixedX) ? options!.fixedX! : 0;
+    const rOptVal = Math.hypot(Rth, Xth + fixedX);
+    if (rOptVal <= 1e-7) {
+      return makeError('Tại X đã chọn xảy ra cộng hưởng không tổn hao (R_th = 0, X_th + X = 0), công suất tiến ra vô cùng.', effNodeA, effNodeB);
+    }
+    rOpt = rOptVal;
+    xOpt = fixedX;
+    optParam = rOpt;
+  } else {
+    if (freqHz === 0) {
+      return makeError('Ở tần số 0 Hz (DC), góc pha tải không áp dụng cho tổng trở phức; hãy chọn chế độ Tự do / Thuần trở.', effNodeA, effNodeB);
+    }
+    const angleDeg = Number.isFinite(options?.fixedAngleDeg) ? options!.fixedAngleDeg! : 0;
+    const angleRad = (angleDeg * Math.PI) / 180;
+    if (Math.cos(angleRad) <= 1e-6) {
+      return makeError('Với góc pha tải |φ| ≥ 90°, phần thực R_L ≤ 0 nên không tồn tại cực đại công suất tác dụng dương.', effNodeA, effNodeB);
+    }
+    const magZ = Math.hypot(Rth, Xth);
+    if (magZ <= 1e-7) {
+      return makeError('Tổng trở tương đương |Z_th| ≈ 0 Ω, công suất cực đại không hữu hạn.', effNodeA, effNodeB);
+    }
+    rOpt = magZ * Math.cos(angleRad);
+    xOpt = magZ * Math.sin(angleRad);
+    optParam = magZ;
+  }
+
+  const Vth = new Complex(th.vth.re, th.vth.im);
+  const Zth = new Complex(Rth, Xth);
+  const Zopt = new Complex(rOpt, xOpt);
+  const Ztot = Zth.add(Zopt);
+  const Iload = Vth.div(Ztot);
+  const Uload = Iload.mul(Zopt);
+  const Sopt = Uload.mul(Iload.conj());
+  const pMax = Sopt.re;
+  const qAtOpt = Sopt.im;
+  const sAtOpt = Sopt.mag();
+  const powerFactor = sAtOpt > 1e-12 ? pMax / sAtOpt : 1;
+  const theveninEfficiencyPct = Rth + rOpt > 1e-12 ? (rOpt / (Rth + rOpt)) * 100 : 0;
+
+  // Kiểm chứng trực tiếp bằng MNA toàn mạch với nhánh IMPEDANCE Z_opt gắn tại (effNodeA, effNodeB)
+  const simMode = freqHz === 0 ? 'DC_SS' : 'AC';
+  const tempZEl: CircuitElement = {
+    id: '__z_opt_verify',
+    name: 'Z_opt',
+    type: 'IMPEDANCE',
+    x: 0,
+    y: 0,
+    rotation: 0,
+    impedance: { re: rOpt, im: xOpt },
+  };
+  const baseElements = excludeSet
+    ? state.elements.filter((e) => !excludeSet!.has(e.id))
+    : state.elements;
+  const verifyNetlist: NetlistGraph = {
+    ...origNetlist,
+    nodeMap: {
+      ...origNetlist.nodeMap,
+      '__z_opt_verify:1': effNodeA,
+      '__z_opt_verify:2': effNodeB,
+    },
+  };
+  const simRes = solveSingleFrequencyMna([...baseElements, tempZEl], verifyNetlist, freqHz, simMode);
+  let pSimulated = pMax;
+  if (simRes.success && simRes.x && simRes.sys) {
+    pSimulated = extractElementBranchAtFreq(tempZEl, verifyNetlist, simRes.x, simRes.sys, freqHz, simMode).S.re;
+  }
+
+  // Tạo dữ liệu đường cong quét công suất P(param) quanh điểm cực đại
+  const vthMagSq = Vth.mag() * Vth.mag();
+  const angleRad =
+    constraintMode === 'FIXED_ANGLE'
+      ? ((Number.isFinite(options?.fixedAngleDeg) ? options!.fixedAngleDeg! : 0) * Math.PI) / 180
+      : 0;
+  const xFixedForSweep =
+    constraintMode === 'FIXED_X'
+      ? Number.isFinite(options?.fixedX)
+        ? options!.fixedX!
+        : 0
+      : constraintMode === 'CONJUGATE'
+        ? xOpt
+        : 0;
+
+  const evalSweepPower = (param: number): number => {
+    let r = param;
+    let x = xFixedForSweep;
+    if (constraintMode === 'FIXED_ANGLE') {
+      r = param * Math.cos(angleRad);
+      x = param * Math.sin(angleRad);
+    }
+    const denom = (Rth + r) * (Rth + r) + (Xth + x) * (Xth + x);
+    return denom > 1e-24 ? (vthMagSq * r) / denom : 0;
+  };
+
+  const maxParam = Math.max(optParam * 3, 1e-3);
+  const rawParams = new Set<number>([0, optParam]);
+  const sampleCount = 40;
+  for (let i = 1; i <= sampleCount; i++) {
+    rawParams.add((maxParam * i) / sampleCount);
+  }
+  const sweepPoints: MaxPowerSweepPoint[] = Array.from(rawParams)
+    .sort((a, b) => a - b)
+    .map((param) => ({ param, powerW: evalSweepPower(param) }));
+
+  return {
+    success: true,
+    warning,
+    freqHz,
+    nodeA: effNodeA,
+    nodeB: effNodeB,
+    constraintMode,
+    vth: { re: Vth.re, im: Vth.im },
+    zth: { re: Rth, im: Xth },
+    zOpt: { re: rOpt, im: xOpt },
+    pMax,
+    pSimulated,
+    qAtOpt,
+    sAtOpt,
+    iLoad: { re: Iload.re, im: Iload.im },
+    uLoad: { re: Uload.re, im: Uload.im },
+    powerFactor,
+    theveninEfficiencyPct,
+    sweepParamLabel,
+    optParam,
+    sweepPoints,
   };
 }

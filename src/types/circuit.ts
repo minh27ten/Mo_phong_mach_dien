@@ -241,3 +241,38 @@ export interface TwoPortExtractResult {
   Y?: [[ComplexInput, ComplexInput], [ComplexInput, ComplexInput]];
   A?: [[ComplexInput, ComplexInput], [ComplexInput, ComplexInput]];
 }
+
+export type MaxPowerConstraintMode =
+  | 'CONJUGATE'
+  | 'PURE_RESISTIVE'
+  | 'FIXED_X'
+  | 'FIXED_ANGLE';
+
+export interface MaxPowerSweepPoint {
+  param: number;
+  powerW: number;
+}
+
+export interface MaxPowerResult {
+  success: boolean;
+  error?: string;
+  warning?: string;
+  freqHz: number;
+  nodeA: string;
+  nodeB: string;
+  constraintMode: MaxPowerConstraintMode;
+  vth: ComplexInput;
+  zth: ComplexInput;
+  zOpt: ComplexInput;
+  pMax: number;
+  pSimulated: number;
+  qAtOpt: number;
+  sAtOpt: number;
+  iLoad: ComplexInput;
+  uLoad: ComplexInput;
+  powerFactor: number;
+  theveninEfficiencyPct: number;
+  sweepParamLabel: string;
+  optParam: number;
+  sweepPoints: MaxPowerSweepPoint[];
+}

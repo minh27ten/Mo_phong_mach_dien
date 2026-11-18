@@ -11,7 +11,7 @@ Tài liệu hướng dẫn chi tiết cách vẽ sơ đồ, thiết lập thông
 3. [Bảng phím tắt thao tác nhanh](#3-bảng-phím-tắt-thao-tác-nhanh)
 4. [Danh mục 17+GND phần tử & ý nghĩa thông số](#4-danh-mục-17gnd-phần-tử--ý-nghĩa-thông-số)
 5. [4 Chế độ mô phỏng & đọc kết quả](#5-4-chế-độ-mô-phỏng--đọc-kết-quả)
-6. [Trình trích xuất Thévenin / Norton & Mạng 2 cửa](#6-trình-trích-xuất-thévenin--norton--mạng-2-cửa)
+6. [Trình trích xuất Thévenin / Norton, Tìm Z (P_max) & Mạng 2 cửa](#6-trình-trích-xuất-thévenin--norton-tìm-z-p_max--mạng-2-cửa)
 7. [Mô phỏng hệ thống Điện 3 Pha (Y / Δ & lệch trung tính)](#7-mô-phỏng-hệ-thống-điện-3-pha-y--δ--lệch-trung-tính)
 8. [Lưu & mở lại mạch bằng tệp JSON](#8-lưu--mở-lại-mạch-bằng-tệp-json)
 9. [Xử lý lỗi thường gặp (Diagnostics)](#9-xử-lý-lỗi-thường-gặp-diagnostics)
@@ -22,14 +22,14 @@ Tài liệu hướng dẫn chi tiết cách vẽ sơ đồ, thiết lập thông
 
 Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
-- **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
+- **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
 - **Thư viện linh kiện (Cột trái):** Chứa 17 phần tử chuyên ngành điện + ký hiệu Đất (`GND`), có ô tìm kiếm nhanh theo tên hoặc ký hiệu (`R`, `Z`, `C`, `op-amp`, `3 pha`, ...). Nhấp nút thu gọn ở góc trên bên trái thanh công cụ nếu muốn mở rộng không gian vẽ.
 - **Bản vẽ sơ đồ (Giữa):** Lưới tọa độ `20 px` giúp căn thẳng hàng linh kiện và dây dẫn, kèm công tắc **Hiển thị số đo** (hiển thị điện áp nút `N...` và dòng nhánh `I=...` trực tiếp trên mạch) và cụm thu phóng (`+`, `−`, *Khớp khung nhìn*).
 - **Bảng Thông số & Kết quả (Cột phải):** Gồm 4 thẻ:
   - **Thông số:** Chỉnh sửa thuộc tính của phần tử hoặc dây đang chọn.
   - **Kết quả:** Xem thẻ *Xếp chồng đa tần số* (khi mạch có nhiều tần số / sóng hài), *Cân bằng công suất* (`P`, `Q`), bảng *Điện thế các nút*, bảng *Dòng điện & Công suất phần tử*, và nhấp chọn từng dòng để xem thẻ **Phổ hài & Tức thời**.
   - **Đồ thị:** Biểu đồ dao động ký đa kênh theo thời gian `u(t)`, `i(t)` ở chế độ *Quá độ* (bao gồm cả dạng sóng điện áp nguồn `u(E...)`).
-  - **Tương đương:** Công cụ trích xuất *Thévenin / Norton* và *Mạng 2 cửa `[Z]`, `[Y]`, `[A]`* kèm nút chọn nhanh theo các tần số đang có trong mạch.
+  - **Tương đương:** Công cụ trích xuất *Thévenin / Norton*, *Tìm Z (P_max)* cho mạng 1 cửa, và *Mạng 2 cửa `[Z]`, `[Y]`, `[A]`* kèm nút chọn nhanh theo các tần số đang có trong mạch.
 
 ---
 
@@ -125,13 +125,24 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
 ---
 
-## 6. Trình trích xuất Thévenin / Norton & Mạng 2 cửa
+## 6. Trình trích xuất Thévenin / Norton, Tìm Z (P_max) & Mạng 2 cửa
 
 Mở thẻ **Tương đương** ở cột bên phải:
-1. Chọn **Thévenin / Norton** hoặc **Mạng 2 cửa [Z, Y, A]**.
+1. Chọn **Thévenin / Norton**, **Tìm Z (P_max)** hoặc **Mạng 2 cửa [Z, Y, A]**.
 2. Nhập **Tần số trích xuất** (`0 Hz` cho mạch DC, hoặc `50 Hz`, `100 Hz`, ... cho mạch AC) — hoặc nhấp nhanh các nút **Tần số trong mạch** (ví dụ `0 Hz (DC)`, `50 Hz`, `150 Hz`) hiển thị bên dưới ô nhập.
 3. Chọn các nút cửa ra theo số nút hiển thị trên bản vẽ (ví dụ `Nút 2` và `Nút 0` làm cực `(a, b)` cho 1 cửa, hoặc cặp `(1, 1')` và `(2, 2')` cho 2 cửa).
 4. Nhấn **Trích xuất thông số tương đương** — hệ thống tự động giữ nguyên nguồn độc lập khi tính $V_{\text{th}}$ hở mạch, triệt tiêu nguồn độc lập để bơm tín hiệu thử và trả về đầy đủ $V_{\text{th}}, Z_{\text{th}}, I_N, Y_{\text{th}}$ (hoặc cả 3 ma trận `[Z], [Y], [A]` dưới dạng số phức).
+
+### Mô phỏng bài toán Mạng 1 cửa tìm Z để công suất cực đại (`Tìm Z (P_max)`)
+- **Hai cách xác định tải:**
+  - *Tự động tách nhánh tải có sẵn:* Chọn phần tử tải 2 cực đang nối trong mạch (như `Z1`, `R`, `L`, `C`) ở mục **Nhánh tải / Cách chọn cửa**. Bộ giải sẽ tạm ngắt riêng nhánh đó khi tính $V_{\text{th}}, Z_{\text{th}}$ mà vẫn giữ nguyên đánh số nút của sơ đồ.
+  - *Mạng 1 cửa để hở sẵn hai cực `(a, b)`:* Chọn **Chọn trực tiếp 2 cực (a, b)** và chỉ định cặp nút đang để hở của mạng 1 cửa (hoặc thử ngay mạch mẫu **1-Cửa P_max**).
+- **Bốn chế độ ràng buộc tổng trở tải:**
+  1. **Tự do $Z = R + jX$ (Liên hợp $Z = Z_{\text{th}}^*$):** $Z_{\text{opt}} = R_{\text{th}} - jX_{\text{th}}$, $P_{\max} = \frac{|V_{\text{th}}|^2}{4R_{\text{th}}}$.
+  2. **Thuần trở $Z = R$ ($X = 0$):** $R_{\text{opt}} = |Z_{\text{th}}| = \sqrt{R_{\text{th}}^2 + X_{\text{th}}^2}$.
+  3. **Cố định phần ảo $X$, thay đổi $R$:** Nhập điện kháng tải $X$, phần mềm tìm $R_{\text{opt}} = \sqrt{R_{\text{th}}^2 + (X_{\text{th}} + X)^2}$.
+  4. **Cố định góc pha $\varphi$ ($\cos\varphi$), thay đổi $|Z|$:** Nhập góc $\varphi$ (độ), phần mềm tìm $|Z_{\text{opt}}| = |Z_{\text{th}}|$ với $Z_{\text{opt}} = |Z_{\text{th}}|\angle\varphi$.
+- **Kiểm chứng MNA, đồ thị & gán thẳng lên mạch:** Nhấn **Tìm Z tối ưu & Mô phỏng kiểm chứng** để xem $Z_{\text{opt}}, P_{\max}$ lý thuyết đối chiếu với $P_{\text{MNA}}$ mô phỏng trực tiếp trên toàn mạch, $Q, S, I_{\text{tải}}, U_{\text{tải}}, \cos\varphi$, hiệu suất Thévenin $\eta$, đồ thị đường cong $P(R_L)$ / $P(|Z_L|)$, và bấm nút gán/nối ngay tổng trở $Z_{\text{opt}}$ lên sơ đồ kèm chạy mô phỏng kiểm tra tức thì.
 
 ---
 

@@ -15,6 +15,8 @@ import {
   CircuitState,
   ComplexInput,
   HarmonicComponent,
+  MaxPowerConstraintMode,
+  MaxPowerResult,
   SimulationResult,
   SourceHarmonic,
   TheveninNortonResult,
@@ -22,10 +24,11 @@ import {
   Wire,
 } from '../types/circuit';
 import { Complex } from '../engine/complex';
-import { getComponentMeta } from '../engine/pins';
+import { getComponentMeta, getElementWorldPins } from '../engine/pins';
 import {
   extractTheveninNorton,
   extractTwoPort,
+  findMaxPowerImpedance,
   getSourceComponents,
   getSourceHarmonicSummary,
 } from '../engine/mna';
@@ -39,6 +42,7 @@ interface InspectorPanelProps {
   onChangeTab: (tab: InspectorTab) => void;
   circuit: CircuitState;
   allNodeIds: string[];
+  nodeMap?: Record<string, string>;
   selectedElement: CircuitElement | null;
   selectedWire: Wire | null;
   simulationResult: SimulationResult | null;
@@ -48,6 +52,13 @@ interface InspectorPanelProps {
   onDeleteElement: (id: string) => void;
   onDeleteWire: (id: string) => void;
   onRunTransientNow: () => void;
+  onApplyMaxPowerImpedance?: (params: {
+    nodeA: string;
+    nodeB: string;
+    freqHz: number;
+    zOpt: ComplexInput;
+    targetElementId?: string;
+  }) => void;
 }
 
 const INPUT_CLASS =
@@ -153,6 +164,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onChangeTab,
   circuit,
   allNodeIds,
+  nodeMap,
   selectedElement,
   selectedWire,
   simulationResult,
@@ -162,9 +174,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onDeleteElement,
   onDeleteWire,
   onRunTransientNow,
+  onApplyMaxPowerImpedance,
 }) => {
-  // State cho Trình trích xuất tương đương
-  const [eqMode, setEqMode] = useState<'ONE_PORT' | 'TWO_PORT'>('ONE_PORT');
+  // State cho Trình trích xuất tương đương & Tối ưu công suất
+  const [eqMode, setEqMode] = useState<'ONE_PORT' | 'MAX_POWER' | 'TWO_PORT'>('ONE_PORT');
   const [eqFreq, setEqFreq] = useState<number>(50);
   const [thNodeA, setThNodeA] = useState<string>('1');
   const [thNodeB, setThNodeB] = useState<string>('0');
@@ -174,6 +187,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const [tp2Neg, setTp2Neg] = useState<string>('0');
   const [thResult, setThResult] = useState<TheveninNortonResult | null>(null);
   const [tpResult, setTpResult] = useState<TwoPortExtractResult | null>(null);
+  const [mpConstraint, setMpConstraint] = useState<MaxPowerConstraintMode>('CONJUGATE');
+  const [mpFixedX, setMpFixedX] = useState<number>(0);
+  const [mpFixedAngle, setMpFixedAngle] = useState<number>(0);
+  const [mpTargetElId, setMpTargetElId] = useState<string>('');
+  const [mpResult, setMpResult] = useState<MaxPowerResult | null>(null);
+  const [mpHoverIdx, setMpHoverIdx] = useState<number | null>(null);
   const [resultInspectTarget, setResultInspectTarget] = useState<
     { kind: 'NODE' | 'ELEMENT'; id: string } | null
   >(null);
@@ -220,12 +239,50 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     () => circuit.elements.filter((e) => e.type !== 'GND' && e.type !== 'MUTUAL'),
     [circuit.elements],
   );
+  const passiveLoadCandidates = useMemo(
+    () =>
+      circuit.elements.filter(
+        (e) =>
+          e.type === 'IMPEDANCE' ||
+          e.type === 'RESISTOR' ||
+          e.type === 'CAPACITOR' ||
+          e.type === 'INDUCTOR',
+      ),
+    [circuit.elements],
+  );
+  const activeMpTargetId = passiveLoadCandidates.some((e) => e.id === mpTargetElId)
+    ? mpTargetElId
+    : '';
+  const activeMpTargetPins = useMemo(() => {
+    if (!activeMpTargetId) return null;
+    const el = circuit.elements.find((e) => e.id === activeMpTargetId);
+    if (!el) return null;
+    const pins = getElementWorldPins(el);
+    if (pins.length !== 2) return null;
+    return {
+      el,
+      nodeA: nodeMap?.[pins[0].key] ?? '0',
+      nodeB: nodeMap?.[pins[1].key] ?? '0',
+    };
+  }, [activeMpTargetId, circuit.elements, nodeMap]);
 
   const handleExtract = () => {
     if (eqMode === 'ONE_PORT') {
       const a = allNodeIds.includes(thNodeA) ? thNodeA : (allNodeIds[1] ?? '0');
       const b = allNodeIds.includes(thNodeB) ? thNodeB : '0';
       setThResult(extractTheveninNorton(circuit, a, b, eqFreq));
+    } else if (eqMode === 'MAX_POWER') {
+      const a = allNodeIds.includes(thNodeA) ? thNodeA : (allNodeIds[1] ?? '0');
+      const b = allNodeIds.includes(thNodeB) ? thNodeB : '0';
+      setMpHoverIdx(null);
+      setMpResult(
+        findMaxPowerImpedance(circuit, a, b, eqFreq, {
+          constraintMode: mpConstraint,
+          fixedX: mpFixedX,
+          fixedAngleDeg: mpFixedAngle,
+          excludeElementId: activeMpTargetId || undefined,
+        }),
+      );
     } else {
       const n1p = allNodeIds.includes(tp1Pos) ? tp1Pos : (allNodeIds[1] ?? '0');
       const n1n = allNodeIds.includes(tp1Neg) ? tp1Neg : '0';
@@ -1524,28 +1581,39 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
         {activeTab === 'EQUIV' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/70">
+            <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/70">
               <button
                 type="button"
                 onClick={() => setEqMode('ONE_PORT')}
-                className={`py-1.5 px-2 text-xs font-medium rounded-lg transition-all ${
+                className={`py-1.5 px-1.5 text-[11px] font-medium rounded-lg transition-all whitespace-nowrap ${
                   eqMode === 'ONE_PORT'
                     ? 'bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200/70'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Thévenin / Norton
+                Thévenin
+              </button>
+              <button
+                type="button"
+                onClick={() => setEqMode('MAX_POWER')}
+                className={`py-1.5 px-1.5 text-[11px] font-medium rounded-lg transition-all whitespace-nowrap ${
+                  eqMode === 'MAX_POWER'
+                    ? 'bg-white text-blue-700 shadow-2xs ring-1 ring-blue-200/80 font-semibold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Tìm Z (P_max)
               </button>
               <button
                 type="button"
                 onClick={() => setEqMode('TWO_PORT')}
-                className={`py-1.5 px-2 text-xs font-medium rounded-lg transition-all ${
+                className={`py-1.5 px-1.5 text-[11px] font-medium rounded-lg transition-all whitespace-nowrap ${
                   eqMode === 'TWO_PORT'
                     ? 'bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200/70'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Mạng 2 cửa [Z, Y, A]
+                Mạng 2 cửa
               </button>
             </div>
 
@@ -1608,6 +1676,112 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     ))}
                   </select>
                 </label>
+              </div>
+            ) : eqMode === 'MAX_POWER' ? (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <label className="block">
+                    <span className="block text-[11px] font-medium text-slate-600 mb-1">
+                      Nhánh tải Z đang đặt sẵn (tùy chọn)
+                    </span>
+                    <select
+                      value={activeMpTargetId}
+                      onChange={(e) => setMpTargetElId(e.target.value)}
+                      className={SELECT_CLASS}
+                    >
+                      <option value="">— Cổng để hở (chọn 2 nút a, b bên dưới) —</option>
+                      {passiveLoadCandidates.map((el) => (
+                        <option key={el.id} value={el.id}>
+                          {el.name} ({getComponentMeta(el.type).shortLabel})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedElement &&
+                    passiveLoadCandidates.some((e) => e.id === selectedElement.id) &&
+                    activeMpTargetId !== selectedElement.id && (
+                      <button
+                        type="button"
+                        onClick={() => setMpTargetElId(selectedElement.id)}
+                        className="text-[11px] font-medium text-blue-600 hover:text-blue-700 hover:underline"
+                      >
+                        Dùng phần tử đang chọn ({selectedElement.name})
+                      </button>
+                    )}
+                </div>
+
+                {activeMpTargetPins ? (
+                  <div className="px-2.5 py-2 rounded-lg bg-blue-50/70 border border-blue-200/70 text-[11px] text-blue-900">
+                    Đang xét mạng 1 cửa tại hai đầu <span className="font-mono font-semibold">{activeMpTargetPins.el.name}</span>:{' '}
+                    <span className="font-mono font-semibold">
+                      Nút {activeMpTargetPins.nodeA} ↔ Nút {activeMpTargetPins.nodeB}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <label className="block">
+                      <span className="block text-[11px] font-medium text-slate-600 mb-1">Cực dương cổng (a)</span>
+                      <select
+                        value={allNodeIds.includes(thNodeA) ? thNodeA : (allNodeIds[1] ?? '0')}
+                        onChange={(e) => setThNodeA(e.target.value)}
+                        className={`${SELECT_CLASS} font-mono`}
+                      >
+                        {allNodeIds.map((nid) => (
+                          <option key={nid} value={nid}>
+                            Nút {nid}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="block text-[11px] font-medium text-slate-600 mb-1">Cực âm cổng (b)</span>
+                      <select
+                        value={allNodeIds.includes(thNodeB) ? thNodeB : '0'}
+                        onChange={(e) => setThNodeB(e.target.value)}
+                        className={`${SELECT_CLASS} font-mono`}
+                      >
+                        {allNodeIds.map((nid) => (
+                          <option key={nid} value={nid}>
+                            Nút {nid}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+
+                <label className="block">
+                  <span className="block text-[11px] font-medium text-slate-600 mb-1">
+                    Điều kiện biến thiên của tải Z
+                  </span>
+                  <select
+                    value={mpConstraint}
+                    onChange={(e) => setMpConstraint(e.target.value as MaxPowerConstraintMode)}
+                    className={SELECT_CLASS}
+                  >
+                    <option value="CONJUGATE">Tự do Z = R + jX (Liên hợp Z = Z_th*)</option>
+                    <option value="PURE_RESISTIVE">Thuần trở Z = R (X = 0, R = |Z_th|)</option>
+                    <option value="FIXED_X">Cố định phần ảo X, thay đổi R</option>
+                    <option value="FIXED_ANGLE">Cố định góc pha φ (cos φ), thay đổi |Z|</option>
+                  </select>
+                </label>
+
+                {mpConstraint === 'FIXED_X' && (
+                  <NumField
+                    label="Điện kháng tải cố định (X)"
+                    unit="Ω"
+                    value={mpFixedX}
+                    onChange={setMpFixedX}
+                  />
+                )}
+                {mpConstraint === 'FIXED_ANGLE' && (
+                  <NumField
+                    label="Góc pha tải cố định (φ)"
+                    unit="°"
+                    value={mpFixedAngle}
+                    onChange={setMpFixedAngle}
+                  />
+                )}
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -1673,8 +1847,230 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
               onClick={handleExtract}
               className="w-full py-2 px-3 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors shadow-2xs"
             >
-              Trích xuất thông số tương đương
+              {eqMode === 'MAX_POWER' ? 'Tìm Z tối ưu & Mô phỏng kiểm chứng' : 'Trích xuất thông số tương đương'}
             </button>
+
+            {eqMode === 'MAX_POWER' && mpResult && (
+              <div className="space-y-3">
+                {!mpResult.success ? (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                    {mpResult.error}
+                  </div>
+                ) : (() => {
+                  const zOptC = new Complex(mpResult.zOpt.re, mpResult.zOpt.im);
+                  const iLoadC = new Complex(mpResult.iLoad.re, mpResult.iLoad.im);
+                  const uLoadC = new Complex(mpResult.uLoad.re, mpResult.uLoad.im);
+                  const pts = mpResult.sweepPoints;
+                  const W = 330;
+                  const H = 152;
+                  const PAD = { top: 14, right: 12, bottom: 24, left: 42 };
+                  const pw = W - PAD.left - PAD.right;
+                  const ph = H - PAD.top - PAD.bottom;
+                  const maxX = Math.max(1e-6, pts[pts.length - 1]?.param ?? mpResult.optParam * 3);
+                  const maxY = Math.max(1e-6, mpResult.pMax * 1.15);
+                  const mx = (v: number) => PAD.left + (v / maxX) * pw;
+                  const my = (p: number) => PAD.top + (1 - p / maxY) * ph;
+                  const polyPts = pts.map((pt) => `${mx(pt.param).toFixed(1)},${my(pt.powerW).toFixed(1)}`).join(' ');
+                  const hoverPt = mpHoverIdx !== null ? pts[mpHoverIdx] : undefined;
+
+                  return (
+                    <div className="border border-slate-200/90 rounded-xl p-3 bg-slate-50/70 space-y-3 text-xs">
+                      {mpResult.warning && (
+                        <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-800">
+                          {mpResult.warning}
+                        </div>
+                      )}
+
+                      <div className="bg-white rounded-lg border border-blue-200/80 p-2.5 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-blue-700">
+                            Tổng trở tối ưu Z_opt ({mpResult.freqHz === 0 ? 'DC' : `${mpResult.freqHz} Hz`})
+                          </span>
+                          {Math.abs(mpResult.pMax - mpResult.pSimulated) < 1e-2 && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded-full">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Khớp MNA
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm font-mono font-bold text-slate-900">
+                          Z_opt = {zOptC.formatRect(3)} Ω
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-600">
+                          Dạng cực: {zOptC.formatPolar(3)} Ω
+                        </div>
+                        <div className="pt-1 border-t border-slate-100 flex items-baseline justify-between">
+                          <span className="text-[11px] text-slate-600">Công suất cực đại P_max:</span>
+                          <span className="text-sm font-mono font-bold text-emerald-700">
+                            {mpResult.pMax.toFixed(3)} W
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5 font-mono tabular-nums text-[11px]">
+                        <div className="bg-white rounded-lg border border-slate-200/80 px-2 py-1.5">
+                          <span className="block text-[10px] font-sans text-slate-500">V_th (a − b)</span>
+                          <span className="font-semibold text-slate-800">{new Complex(mpResult.vth.re, mpResult.vth.im).formatPolar(2)} V</span>
+                        </div>
+                        <div className="bg-white rounded-lg border border-slate-200/80 px-2 py-1.5">
+                          <span className="block text-[10px] font-sans text-slate-500">Z_th</span>
+                          <span className="font-semibold text-slate-800">{new Complex(mpResult.zth.re, mpResult.zth.im).formatRect(2)} Ω</span>
+                        </div>
+                        <div className="bg-white rounded-lg border border-slate-200/80 px-2 py-1.5">
+                          <span className="block text-[10px] font-sans text-slate-500">U_tải / I_tải</span>
+                          <span className="font-semibold text-slate-800">
+                            {uLoadC.mag().toFixed(2)}V / {iLoadC.mag().toFixed(3)}A
+                          </span>
+                        </div>
+                        <div className="bg-white rounded-lg border border-slate-200/80 px-2 py-1.5">
+                          <span className="block text-[10px] font-sans text-slate-500">cos φ · η_Thévenin</span>
+                          <span className="font-semibold text-slate-800">
+                            {mpResult.powerFactor.toFixed(3)} · {mpResult.theveninEfficiencyPct.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {pts.length >= 2 && (
+                        <div className="bg-white rounded-lg border border-slate-200/80 p-2 space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-slate-500">
+                            <span>Đường cong P theo {mpResult.sweepParamLabel}</span>
+                            <span className="font-mono text-blue-700 font-semibold">
+                              Đỉnh: {mpResult.optParam.toFixed(2)} Ω → {mpResult.pMax.toFixed(2)} W
+                            </span>
+                          </div>
+                          <svg
+                            viewBox={`0 0 ${W} ${H}`}
+                            className="w-full h-auto cursor-crosshair select-none"
+                            onMouseMove={(e) => {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              const rx = ((e.clientX - rect.left) / rect.width) * W - PAD.left;
+                              const targetParam = Math.max(0, Math.min(maxX, (rx / pw) * maxX));
+                              let bestIdx = 0;
+                              let bestDiff = Infinity;
+                              pts.forEach((p, idx) => {
+                                const d = Math.abs(p.param - targetParam);
+                                if (d < bestDiff) {
+                                  bestDiff = d;
+                                  bestIdx = idx;
+                                }
+                              });
+                              setMpHoverIdx(bestIdx);
+                            }}
+                            onMouseLeave={() => setMpHoverIdx(null)}
+                          >
+                            {[0, 0.5, 1].map((f, idx) => (
+                              <g key={idx}>
+                                <line
+                                  x1={PAD.left}
+                                  y1={PAD.top + f * ph}
+                                  x2={W - PAD.right}
+                                  y2={PAD.top + f * ph}
+                                  stroke="#F1F5F9"
+                                  strokeWidth={1}
+                                />
+                                <text
+                                  x={PAD.left - 4}
+                                  y={PAD.top + f * ph + 3}
+                                  textAnchor="end"
+                                  fontSize={8}
+                                  fill="#64748B"
+                                  className="font-mono"
+                                >
+                                  {((1 - f) * maxY).toFixed(maxY >= 10 ? 0 : 2)}
+                                </text>
+                              </g>
+                            ))}
+                            <rect x={PAD.left} y={PAD.top} width={pw} height={ph} fill="none" stroke="#E2E8F0" />
+                            <line
+                              x1={mx(mpResult.optParam)}
+                              y1={my(mpResult.pMax)}
+                              x2={mx(mpResult.optParam)}
+                              y2={PAD.top + ph}
+                              stroke="#93C5FD"
+                              strokeDasharray="3 2"
+                            />
+                            <polyline
+                              points={polyPts}
+                              fill="none"
+                              stroke="#2563EB"
+                              strokeWidth={2}
+                              strokeLinejoin="round"
+                            />
+                            <circle
+                              cx={mx(mpResult.optParam)}
+                              cy={my(mpResult.pMax)}
+                              r={3.5}
+                              fill="#059669"
+                              stroke="#FFFFFF"
+                              strokeWidth={1.2}
+                            />
+                            {hoverPt && (
+                              <circle
+                                cx={mx(hoverPt.param)}
+                                cy={my(hoverPt.powerW)}
+                                r={3}
+                                fill="#2563EB"
+                                stroke="#FFFFFF"
+                                strokeWidth={1.2}
+                              />
+                            )}
+                            <text x={PAD.left} y={H - 6} fontSize={8} fill="#64748B" className="font-mono">
+                              0
+                            </text>
+                            <text
+                              x={mx(mpResult.optParam)}
+                              y={H - 6}
+                              textAnchor="middle"
+                              fontSize={8}
+                              fontWeight={600}
+                              fill="#059669"
+                              className="font-mono"
+                            >
+                              {mpResult.optParam.toFixed(1)}Ω
+                            </text>
+                            <text
+                              x={W - PAD.right}
+                              y={H - 6}
+                              textAnchor="end"
+                              fontSize={8}
+                              fill="#64748B"
+                              className="font-mono"
+                            >
+                              {maxX.toFixed(1)}Ω
+                            </text>
+                          </svg>
+                          {hoverPt && (
+                            <div className="text-[10px] font-mono text-slate-600 text-right">
+                              {mpResult.sweepParamLabel.replace(/\s*\([^)]+\)/, '')} = {hoverPt.param.toFixed(2)} Ω → P = {hoverPt.powerW.toFixed(3)} W
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {onApplyMaxPowerImpedance && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onApplyMaxPowerImpedance({
+                              nodeA: mpResult.nodeA,
+                              nodeB: mpResult.nodeB,
+                              freqHz: mpResult.freqHz,
+                              zOpt: mpResult.zOpt,
+                              targetElementId: activeMpTargetId || undefined,
+                            })
+                          }
+                          className="w-full py-2 px-3 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 transition-colors shadow-2xs"
+                        >
+                          {activeMpTargetPins
+                            ? `Áp dụng Z_opt cho ${activeMpTargetPins.el.name} & Mô phỏng`
+                            : `Gắn Z_opt vào cổng (N${mpResult.nodeA} − N${mpResult.nodeB}) & Mô phỏng`}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
 
             {eqMode === 'ONE_PORT' && thResult && (
               <div className="border border-slate-200/90 rounded-xl p-3 bg-slate-50/70 space-y-2 text-xs">

@@ -4,6 +4,7 @@ import { Complex } from './complex';
 import {
   extractTheveninNorton,
   extractTwoPort,
+  findMaxPowerImpedance,
   getSourceHarmonicSummary,
   runSimulation,
 } from './mna';
@@ -747,6 +748,161 @@ test('Complex Impedance (Z): Thévenin / Norton & Two-Port [Z, Y, A] extraction'
   approx(tp.Z![0][1].im, 20, 1e-3, 'Z12.im');
   approx(tp.Z![1][1].re, 20, 1e-3, 'Z22.re');
   approx(tp.Z![1][1].im, 10, 1e-3, 'Z22.im');
+});
+
+test('findMaxPowerImpedance: mạch mẫu 1 cửa (excludeElementId & open-port, đủ 4 chế độ ràng buộc)', () => {
+  const preset = CIRCUIT_PRESETS.find((p) => p.id === 'max-power-1port');
+  if (!preset) throw new Error('Thiếu mạch mẫu max-power-1port');
+
+  // 1) Chế độ phối hợp liên hợp Z_L = Z_th* với nhánh tải Z1 được tách tự động
+  const conj = findMaxPowerImpedance(preset.state, '', '', 50, {
+    constraintMode: 'CONJUGATE',
+    excludeElementId: 'z1',
+  });
+  if (!conj.success) throw new Error(`CONJUGATE thất bại: ${conj.error}`);
+  approx(conj.vth.re, 50, 1e-3, 'Vth.re');
+  approx(conj.vth.im, -25, 1e-3, 'Vth.im');
+  approx(conj.zth.re, 25, 1e-3, 'Zth.re');
+  approx(conj.zth.im, 12.5, 1e-3, 'Zth.im');
+  approx(conj.zOpt.re, 25, 1e-3, 'Zopt.re (CONJUGATE)');
+  approx(conj.zOpt.im, -12.5, 1e-3, 'Zopt.im (CONJUGATE)');
+  approx(conj.pMax, 31.25, 1e-3, 'P_max (CONJUGATE)');
+  approx(conj.pSimulated, 31.25, 1e-3, 'P_sim MNA (CONJUGATE)');
+  approx(conj.qAtOpt, -15.625, 1e-3, 'Q tại P_max');
+  approx(conj.theveninEfficiencyPct, 50, 1e-3, 'Hiệu suất Thévenin');
+  if (conj.sweepPoints.length < 41) {
+    throw new Error(`Số điểm đường cong quét quá ít: ${conj.sweepPoints.length}`);
+  }
+
+  // 2) Chế độ hở 2 cực mạng 1 cửa (không có Z1 trong mạch)
+  const openPortState = {
+    ...preset.state,
+    elements: preset.state.elements.filter((e) => e.id !== 'z1'),
+  };
+  const openRes = findMaxPowerImpedance(openPortState, conj.nodeA, conj.nodeB, 50, {
+    constraintMode: 'CONJUGATE',
+  });
+  if (!openRes.success) throw new Error(`Open-port thất bại: ${openRes.error}`);
+  approx(openRes.pMax, 31.25, 1e-3, 'P_max open-port');
+  approx(openRes.pSimulated, 31.25, 1e-3, 'P_sim open-port');
+
+  // 3) Thuần trở R_L = |Z_th|
+  const pureR = findMaxPowerImpedance(preset.state, '', '', 50, {
+    constraintMode: 'PURE_RESISTIVE',
+    excludeElementId: 'z1',
+  });
+  if (!pureR.success) throw new Error(`PURE_RESISTIVE thất bại: ${pureR.error}`);
+  const magZth = Math.hypot(25, 12.5);
+  const expectedPureRPmax = 3125 / (2 * (magZth + 25));
+  approx(pureR.zOpt.re, magZth, 1e-3, 'R_opt (PURE_RESISTIVE)');
+  approx(pureR.zOpt.im, 0, 1e-6, 'X_opt (PURE_RESISTIVE)');
+  approx(pureR.pMax, expectedPureRPmax, 1e-3, 'P_max (PURE_RESISTIVE)');
+  approx(pureR.pSimulated, expectedPureRPmax, 1e-3, 'P_sim (PURE_RESISTIVE)');
+
+  // 4) Cố định X = 7.5 Ω => R_opt = sqrt(R_th^2 + (X_th + X)^2)
+  const fixedX = findMaxPowerImpedance(preset.state, '', '', 50, {
+    constraintMode: 'FIXED_X',
+    fixedX: 7.5,
+    excludeElementId: 'z1',
+  });
+  if (!fixedX.success) throw new Error(`FIXED_X thất bại: ${fixedX.error}`);
+  const expectedFixedXR = Math.hypot(25, 12.5 + 7.5);
+  approx(fixedX.zOpt.re, expectedFixedXR, 1e-3, 'R_opt (FIXED_X)');
+  approx(fixedX.zOpt.im, 7.5, 1e-6, 'X (FIXED_X)');
+  approx(fixedX.pSimulated, fixedX.pMax, 1e-3, 'P_sim == P_max (FIXED_X)');
+
+  // 5) Cố định góc pha φ = 30° => |Z_opt| = |Z_th|
+  const fixedAngle = findMaxPowerImpedance(preset.state, '', '', 50, {
+    constraintMode: 'FIXED_ANGLE',
+    fixedAngleDeg: 30,
+    excludeElementId: 'z1',
+  });
+  if (!fixedAngle.success) throw new Error(`FIXED_ANGLE thất bại: ${fixedAngle.error}`);
+  approx(fixedAngle.zOpt.re, magZth * Math.cos(Math.PI / 6), 1e-3, 'R_opt (FIXED_ANGLE)');
+  approx(fixedAngle.zOpt.im, magZth * Math.sin(Math.PI / 6), 1e-3, 'X_opt (FIXED_ANGLE)');
+  approx(fixedAngle.pSimulated, fixedAngle.pMax, 1e-3, 'P_sim == P_max (FIXED_ANGLE)');
+});
+
+test('findMaxPowerImpedance: mạch một chiều (DC 0 Hz)', () => {
+  const dcState: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 120, y: 200, rotation: 0, waveform: 'DC', dcValue: 24, acValue: 24, freqHz: 0 },
+      { id: 'r1', name: 'R1', type: 'RESISTOR', x: 220, y: 120, rotation: 0, resistance: 6 },
+      { id: 'r2', name: 'R2', type: 'RESISTOR', x: 320, y: 200, rotation: 90, resistance: 12 },
+      { id: 'rl', name: 'RL', type: 'RESISTOR', x: 440, y: 200, rotation: 90, resistance: 100 },
+      { id: 'gnd1', name: 'GND', type: 'GND', x: 120, y: 300, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 120, y: 160 }, { x: 120, y: 120 }, { x: 180, y: 120 }] },
+      { id: 'w2', points: [{ x: 260, y: 120 }, { x: 320, y: 120 }, { x: 440, y: 120 }, { x: 440, y: 160 }] },
+      { id: 'w3', points: [{ x: 320, y: 120 }, { x: 320, y: 160 }] },
+      { id: 'w4', points: [{ x: 120, y: 240 }, { x: 120, y: 280 }] },
+      { id: 'w5', points: [{ x: 120, y: 280 }, { x: 320, y: 280 }, { x: 440, y: 280 }, { x: 440, y: 240 }] },
+      { id: 'w6', points: [{ x: 320, y: 240 }, { x: 320, y: 280 }] },
+    ],
+  };
+
+  const res = findMaxPowerImpedance(dcState, '', '', 0, {
+    constraintMode: 'CONJUGATE',
+    excludeElementId: 'rl',
+  });
+  if (!res.success) throw new Error(`DC max power thất bại: ${res.error}`);
+  approx(res.vth.re, 16, 1e-3, 'DC Vth');
+  approx(res.zth.re, 4, 1e-3, 'DC Rth');
+  approx(res.zOpt.re, 4, 1e-3, 'DC R_opt');
+  approx(res.zOpt.im, 0, 1e-6, 'DC X_opt');
+  approx(res.pMax, 16, 1e-3, 'DC P_max');
+  approx(res.pSimulated, 16, 1e-3, 'DC P_sim');
+
+  const dcFixedX = findMaxPowerImpedance(dcState, '', '', 0, {
+    constraintMode: 'FIXED_X',
+    fixedX: 10,
+    excludeElementId: 'rl',
+  });
+  if (dcFixedX.success) {
+    throw new Error('Mong đợi FIXED_X ở DC 0 Hz trả về success=false');
+  }
+});
+
+test('findMaxPowerImpedance: mạng nguồn không tổn hao (R_th = 0) & kiểm tra cực chập', () => {
+  const losslessState: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 120, y: 200, rotation: 0, waveform: 'AC', acValue: 100, amplitudeType: 'RMS', phaseDeg: 0, freqHz: 50 },
+      { id: 'zs', name: 'Zs', type: 'IMPEDANCE', x: 220, y: 120, rotation: 0, impedance: { re: 0, im: 20 } },
+      { id: 'zl', name: 'ZL', type: 'IMPEDANCE', x: 440, y: 200, rotation: 90, impedance: { re: 50, im: 0 } },
+      { id: 'gnd1', name: 'GND', type: 'GND', x: 120, y: 300, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 120, y: 160 }, { x: 120, y: 120 }, { x: 180, y: 120 }] },
+      { id: 'w2', points: [{ x: 260, y: 120 }, { x: 440, y: 120 }, { x: 440, y: 160 }] },
+      { id: 'w4', points: [{ x: 120, y: 240 }, { x: 120, y: 280 }] },
+      { id: 'w5', points: [{ x: 120, y: 280 }, { x: 440, y: 280 }, { x: 440, y: 240 }] },
+    ],
+  };
+
+  const conjFail = findMaxPowerImpedance(losslessState, '', '', 50, {
+    constraintMode: 'CONJUGATE',
+    excludeElementId: 'zl',
+  });
+  if (conjFail.success) {
+    throw new Error('Mong đợi CONJUGATE với R_th = 0 trả về success=false vì P -> vô cùng');
+  }
+
+  const pureR = findMaxPowerImpedance(losslessState, '', '', 50, {
+    constraintMode: 'PURE_RESISTIVE',
+    excludeElementId: 'zl',
+  });
+  if (!pureR.success) throw new Error(`PURE_RESISTIVE với R_th=0 thất bại: ${pureR.error}`);
+  approx(pureR.zOpt.re, 20, 1e-3, 'Lossless PURE_RESISTIVE R_opt');
+  approx(pureR.pMax, 250, 1e-3, 'Lossless PURE_RESISTIVE P_max');
+  approx(pureR.pSimulated, 250, 1e-3, 'Lossless PURE_RESISTIVE P_sim');
+
+  const shorted = findMaxPowerImpedance(losslessState, '0', '0', 50, {
+    constraintMode: 'CONJUGATE',
+  });
+  if (shorted.success) {
+    throw new Error('Mong đợi cặp nút chập (0, 0) trả về success=false');
+  }
 });
 
 

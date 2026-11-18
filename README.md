@@ -31,11 +31,11 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
   3. **Xoay chiều xác lập (`AC`):** Tự động gom các nguồn theo từng tần số, giải MNA phức và áp dụng **nguyên lý xếp chồng đa tần số** để tính tổng giá trị hiệu dụng RMS, biên độ/pha phasor và công suất $P, Q, S$.
   4. **Quá độ (`TRANSIENT`):** Tích hợp ẩn **Backward Euler** theo bước $\Delta t$ và $T_{\text{end}}$, hỗ trợ sơ kiện $u_C(0), i_L(0)$, kích thích DC / AC / Step, hỗ cảm $M$ và vẽ biểu đồ dao động ký SVG đa kênh $u(t), i(t)$.
 - **Trình trích xuất mạng tương đương:**
-  - **Thévenin / Norton:** Chọn cặp nút $(a, b)$ bất kỳ để trích xuất $U_{th}, Z_{th}, I_N, Y_N$ (hỗ trợ cả nguồn phụ thuộc).
+  - **Thévenin / Norton & Tìm Z để P_max:** Chọn cặp nút $(a, b)$ hoặc một nhánh tải sẵn có để trích xuất $U_{th}, Z_{th}, I_N, Y_N$ (hỗ trợ cả nguồn phụ thuộc), giải bài toán truyền công suất cực đại $Z_{opt}$ theo 4 ràng buộc (*Liên hợp $Z^*$*, *Thuần trở $R$*, *Cố định $X$*, *Cố định $\varphi$*), vẽ đường cong $P(R_L)$ / $P(|Z_L|)$ và gán trực tiếp lên sơ đồ.
   - **Mạng hai cửa:** Chọn 2 cặp nút Cửa 1 và Cửa 2 để tính trực tiếp ma trận thông số $[Z]$, $[Y]$ và $[A]$.
 - **Hệ thống điện 3 pha & Sơ đồ trực quan:**
   - Nguồn 3 pha, đường dây có tổng trở dây trung tính $Z_N$, tải 3 pha $Y/\Delta$ hỗ trợ tải không đối xứng và tính **điện áp lệch trung tính $U_{N'N}$**.
-  - Lưới vẽ `20 px`, nối dây trực giao bẻ góc (`Space` đảo góc), hiển thị số đo ngay trên mạch, 4 mạch mẫu (*RLC & Hỗ cảm*, *Op-Amp & Phụ thuộc*, *Hệ thống 3 pha*, *Nguồn hỗn hợp*) và Xuất / Nhập tệp JSON.
+  - Lưới vẽ `20 px`, nối dây trực giao bẻ góc (`Space` đảo góc), hiển thị số đo ngay trên mạch, 5 mạch mẫu (*RLC & Hỗ cảm*, *Op-Amp & Phụ thuộc*, *Hệ thống 3 pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*) và Xuất / Nhập tệp JSON.
 
 ---
 
@@ -77,7 +77,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 | :--- | :--- |
 | `npm run dev` | Chạy máy chủ phát triển Vite tại cổng `3000` |
 | `npm run lint` | Kiểm tra kiểu tĩnh TypeScript (`tsc --noEmit`) |
-| `npm test` | Chạy 37 bài kiểm thử tự động bộ giải MNA & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
+| `npm test` | Chạy 40 bài kiểm thử tự động bộ giải MNA & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
 | `npm run build` | Build bản web tối ưu vào `dist/` |
 | `npm run preview` | Xem trước bản build `dist/` qua Vite Preview |
 | `npm run build:portable` | Đóng gói bản HTML đơn tệp chạy offline (`dist-portable/index.html`) |
@@ -105,7 +105,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 │   │   ├── mna.test.ts            # Unit test cơ bản
 │   │   └── __tests__/             # solver.test.ts & stress.test.ts
 │   ├── components/                # Giao diện React (Canvas, Palette, Inspector, TransientPlot...)
-│   ├── data/presets.ts            # 4 mạch mẫu tích hợp sẵn
+│   ├── data/presets.ts            # 5 mạch mẫu tích hợp sẵn
 │   ├── types/circuit.ts           # Định nghĩa kiểu dữ liệu mạch điện
 │   ├── App.tsx                    # Điều phối trạng thái & phím tắt
 │   └── main.tsx

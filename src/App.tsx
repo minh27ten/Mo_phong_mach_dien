@@ -18,12 +18,14 @@ import {
 import {
   CircuitElement,
   CircuitState,
+  ComplexInput,
   ComponentType,
   SimulationMode,
   SimulationResult,
+  Wire,
   WirePoint,
 } from './types/circuit';
-import { createDefaultElement, isValidComponentType } from './engine/pins';
+import { createDefaultElement, getElementWorldPins, isValidComponentType, snapToGrid } from './engine/pins';
 import { buildNetlist } from './engine/netlist';
 import { runSimulation } from './engine/mna';
 import { CIRCUIT_PRESETS, CircuitPreset } from './data/presets';
@@ -223,6 +225,122 @@ export default function App() {
     setSimulationResult(null);
   };
 
+  const handleApplyMaxPowerImpedance = (params: {
+    nodeA: string;
+    nodeB: string;
+    freqHz: number;
+    zOpt: ComplexInput;
+    targetElementId?: string;
+  }) => {
+    pushHistory(circuit);
+    const clean = (v: number) => (Math.abs(v) < 1e-11 ? 0 : Number(v.toPrecision(8)));
+    const zClean: ComplexInput = { re: clean(params.zOpt.re), im: clean(params.zOpt.im) };
+    const targetMode: SimulationMode = params.freqHz === 0 ? 'DC' : 'AC';
+    let nextCircuit: CircuitState;
+    let focusId: string;
+
+    if (params.targetElementId) {
+      focusId = params.targetElementId;
+      nextCircuit = {
+        ...circuit,
+        elements: circuit.elements.map((el) => {
+          if (el.id !== params.targetElementId) return el;
+          if (el.type === 'RESISTOR' && Math.abs(zClean.im) < 1e-9) {
+            return { ...el, resistance: Math.max(1e-6, zClean.re) };
+          }
+          return {
+            ...el,
+            type: 'IMPEDANCE',
+            impedance: zClean,
+          };
+        }),
+      };
+    } else {
+      const pointsForNode = (nid: string): WirePoint[] => {
+        const pts: WirePoint[] = [];
+        for (const el of circuit.elements) {
+          for (const pin of getElementWorldPins(el)) {
+            if (netlist.nodeMap[pin.key] === nid) pts.push({ x: pin.x, y: pin.y });
+          }
+        }
+        for (const w of circuit.wires) {
+          if (netlist.wireNodeIds.get(w.id) === nid) {
+            pts.push(...w.points);
+          }
+        }
+        return pts;
+      };
+      const ptsA = pointsForNode(params.nodeA);
+      const ptsB = pointsForNode(params.nodeB);
+      let ptA = ptsA[0] ?? { x: 200, y: 120 };
+      let ptB = ptsB[0] ?? { x: 200, y: 240 };
+      let bestScore = -Infinity;
+      for (const a of ptsA) {
+        for (const b of ptsB) {
+          const dist = Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+          const score = Math.max(a.x, b.x) * 2 - dist * 0.25;
+          if (score > bestScore) {
+            bestScore = score;
+            ptA = a;
+            ptB = b;
+          }
+        }
+      }
+
+      let cx = snapToGrid(Math.max(ptA.x, ptB.x) + 80);
+      let cy = snapToGrid((ptA.y + ptB.y) / 2);
+      if (Math.abs(ptA.y - ptB.y) < 40) {
+        cy = snapToGrid(Math.min(ptA.y, ptB.y) + 60);
+      }
+      while (circuit.elements.some((e) => Math.abs(e.x - cx) < 80 && Math.abs(e.y - cy) < 80)) {
+        cx += 80;
+      }
+
+      const newEl = createDefaultElement('IMPEDANCE', cx, cy, circuit.elements);
+      newEl.rotation = ptA.y <= ptB.y ? 90 : 270;
+      newEl.impedance = zClean;
+      focusId = newEl.id;
+
+      const pins = getElementWorldPins(newEl);
+      const pin1 = pins.find((p) => p.pinId === '1')!;
+      const pin2 = pins.find((p) => p.pinId === '2')!;
+      const mkWire = (suffix: string, p: WirePoint, target: WirePoint): Wire => {
+        const goesThroughBody = (p.y < cy && target.y > p.y) || (p.y > cy && target.y < p.y);
+        const pts: WirePoint[] =
+          p.x === target.x || p.y === target.y
+            ? [p, target]
+            : goesThroughBody
+              ? [p, { x: cx - 40, y: p.y }, { x: cx - 40, y: target.y }, target]
+              : [p, { x: p.x, y: target.y }, target];
+        return {
+          id: `w_${Date.now()}_${suffix}_${Math.random().toString(36).slice(2, 5)}`,
+          points: pts,
+        };
+      };
+      const newWires: Wire[] = [];
+      if (pin1.x !== ptA.x || pin1.y !== ptA.y) {
+        newWires.push(mkWire('a', { x: pin1.x, y: pin1.y }, ptA));
+      }
+      if (pin2.x !== ptB.x || pin2.y !== ptB.y) {
+        newWires.push(mkWire('b', { x: pin2.x, y: pin2.y }, ptB));
+      }
+
+      nextCircuit = {
+        elements: [...circuit.elements, newEl],
+        wires: [...circuit.wires, ...newWires],
+      };
+    }
+
+    setCircuit(nextCircuit);
+    setMode(targetMode);
+    setSelectedElementId(focusId);
+    setSelectedWireId(null);
+    setFitTrigger((n) => n + 1);
+    const res = runSimulation(nextCircuit, targetMode, { dt, tEnd });
+    setSimulationResult(res);
+    setInspectorTab('RESULTS');
+  };
+
   const handleExportJson = () => {
     const payload = JSON.stringify({ version: 1, mode, dt, tEnd, circuit }, null, 2);
     const blob = new Blob([payload], { type: 'application/json' });
@@ -419,7 +537,7 @@ export default function App() {
           </span>
           <span>MạchĐiệnLab</span>
           <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200/70">
-            v1.1
+            v1.2
           </span>
         </a>
 
@@ -737,6 +855,7 @@ export default function App() {
             onChangeTab={setInspectorTab}
             circuit={circuit}
             allNodeIds={netlist.allNodeIds}
+            nodeMap={netlist.nodeMap}
             selectedElement={selectedElement}
             selectedWire={selectedWire}
             simulationResult={simulationResult}
@@ -749,6 +868,7 @@ export default function App() {
             onDeleteElement={handleDeleteElement}
             onDeleteWire={handleDeleteWire}
             onRunTransientNow={() => handleRunSimulation('TRANSIENT')}
+            onApplyMaxPowerImpedance={handleApplyMaxPowerImpedance}
           />
         )}
       </main>
