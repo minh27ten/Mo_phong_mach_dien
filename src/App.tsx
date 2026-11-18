@@ -1,18 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Cable,
+  Check,
+  ChevronDown,
   Download,
-  MousePointer,
+  FolderOpen,
+  HelpCircle,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Play,
-  Redo2,
-  RotateCw,
   Trash2,
-  Undo2,
   Upload,
+  X,
   Zap,
 } from 'lucide-react';
 import {
@@ -32,10 +32,23 @@ import { CIRCUIT_PRESETS, CircuitPreset } from './data/presets';
 import { PaletteSidebar } from './components/PaletteSidebar';
 import { EditorTool, SchematicCanvas } from './components/SchematicCanvas';
 import { InspectorPanel, InspectorTab } from './components/InspectorPanel';
-import { DraftNumInput } from './components/DraftNumInput';
 
 function cloneState(s: CircuitState): CircuitState {
   return JSON.parse(JSON.stringify(s));
+}
+
+interface SavePickerWindow extends Window {
+  __CIRCUITLAB_DESKTOP__?: boolean;
+  showSaveFilePicker?: (options?: {
+    suggestedName?: string;
+    types?: Array<{ description?: string; accept: Record<string, string[]> }>;
+  }) => Promise<{
+    name?: string;
+    createWritable: () => Promise<{
+      write: (data: string) => Promise<void>;
+      close: () => Promise<void>;
+    }>;
+  }>;
 }
 
 export default function App() {
@@ -63,7 +76,44 @@ export default function App() {
     runSimulation(initialPreset.state, initialPreset.recommendedMode),
   );
   const [importError, setImportError] = useState<string | null>(null);
+  const [presetMenuOpen, setPresetMenuOpen] = useState<boolean>(false);
+  const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [exportFilename, setExportFilename] = useState<string>('mach-dien');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const presetMenuRef = useRef<HTMLDivElement | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+      toastTimerRef.current = null;
+    }, 3200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!presetMenuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (presetMenuRef.current && !presetMenuRef.current.contains(e.target as Node)) {
+        setPresetMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    return () => window.removeEventListener('mousedown', onPointerDown);
+  }, [presetMenuOpen]);
 
   const netlist = useMemo(() => buildNetlist(circuit.elements, circuit.wires), [circuit]);
 
@@ -341,15 +391,72 @@ export default function App() {
     setInspectorTab('RESULTS');
   };
 
-  const handleExportJson = () => {
-    const payload = JSON.stringify({ version: 1, mode, dt, tEnd, circuit }, null, 2);
-    const blob = new Blob([payload], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `mach-dien-${activePresetId || 'custom'}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const defaultExportBaseName = useMemo(() => `mach-dien-${activePresetId || 'custom'}`, [activePresetId]);
+
+  const buildExportPayload = useCallback(
+    () => JSON.stringify({ version: 1, mode, dt, tEnd, circuit }, null, 2),
+    [mode, dt, tEnd, circuit],
+  );
+
+  const triggerBrowserDownload = useCallback(
+    (fileName: string, payload: string) => {
+      const clean = fileName.trim() || defaultExportBaseName;
+      const finalName = clean.toLowerCase().endsWith('.json') ? clean : `${clean}.json`;
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = finalName;
+      a.click();
+      URL.revokeObjectURL(url);
+      return finalName;
+    },
+    [defaultExportBaseName],
+  );
+
+  const handleExportJson = useCallback(async () => {
+    const payload = buildExportPayload();
+    const suggestedName = `${defaultExportBaseName}.json`;
+    const win = window as SavePickerWindow;
+
+    if (win.__CIRCUITLAB_DESKTOP__) {
+      triggerBrowserDownload(suggestedName, payload);
+      return;
+    }
+
+    if (typeof win.showSaveFilePicker === 'function') {
+      try {
+        const handle = await win.showSaveFilePicker({
+          suggestedName,
+          types: [
+            {
+              description: 'Tệp mạch điện JSON',
+              accept: { 'application/json': ['.json'] },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(payload);
+        await writable.close();
+        showToast(`Đã lưu tệp ${handle.name || suggestedName}`);
+        return;
+      } catch (err) {
+        if ((err as { name?: string })?.name === 'AbortError') {
+          return;
+        }
+      }
+    }
+
+    setExportFilename(defaultExportBaseName);
+    setShowExportModal(true);
+  }, [buildExportPayload, defaultExportBaseName, showToast, triggerBrowserDownload]);
+
+  const handleConfirmFallbackExport = (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = buildExportPayload();
+    const savedName = triggerBrowserDownload(exportFilename, payload);
+    setShowExportModal(false);
+    showToast(`Đã xuất tệp ${savedName}`);
   };
 
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -472,11 +579,32 @@ export default function App() {
     e.target.value = '';
   };
 
-  // Phím tắt: V (chọn), W (nối dây), R (xoay), Delete/Backspace (xóa), Esc (hủy), Ctrl+Z / Ctrl+Shift+Z, Ctrl+Enter (chạy)
+  // Phím tắt: V (chọn), W (nối dây), R (xoay), Delete/Backspace (xóa), Esc (hủy), Ctrl+Z / Ctrl+Shift+Z, Ctrl+S (lưu), Ctrl+Enter (chạy)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       const inInput = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+
+      if (e.key === 'Escape') {
+        if (showExportModal) {
+          setShowExportModal(false);
+          return;
+        }
+        if (showHelpModal) {
+          setShowHelpModal(false);
+          return;
+        }
+        if (presetMenuOpen) {
+          setPresetMenuOpen(false);
+          return;
+        }
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void handleExportJson();
+        return;
+      }
 
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -519,12 +647,16 @@ export default function App() {
   }, [
     selectedElementId,
     selectedWireId,
+    showExportModal,
+    showHelpModal,
+    presetMenuOpen,
     handleRotateElement,
     handleDeleteElement,
     handleDeleteWire,
     handleUndo,
     handleRedo,
     handleRunSimulation,
+    handleExportJson,
   ]);
 
   const selectedElement = useMemo(
@@ -535,259 +667,183 @@ export default function App() {
     () => circuit.wires.find((w) => w.id === selectedWireId) ?? null,
     [circuit.wires, selectedWireId],
   );
+  const activePreset = useMemo(
+    () => CIRCUIT_PRESETS.find((p) => p.id === activePresetId) ?? null,
+    [activePresetId],
+  );
 
   const needsRerun = simulationResult === null && circuit.elements.length > 0;
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#F8FAFC] text-slate-900 overflow-hidden">
-      {/* Top Bar: Thương hiệu — Mạch mẫu — Nút chạy mô phỏng */}
-      <header className="h-12 shrink-0 bg-white border-b border-slate-200/90 px-4 flex items-center justify-between gap-4">
-        <a
-          href="#top"
-          onClick={(e) => e.preventDefault()}
-          className="flex items-center gap-2 text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
-        >
-          <span className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-2xs">
-            <Zap className="w-4 h-4 fill-current" />
-          </span>
-          <span>MạchĐiệnLab</span>
-          <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 border border-slate-200/70">
-            v1.3
-          </span>
-        </a>
-
-        <nav
-          aria-label="Mạch mẫu tích hợp"
-          className="flex items-center gap-1 bg-slate-100/90 p-1 rounded-xl border border-slate-200/70 overflow-x-auto max-w-full"
-        >
-          {CIRCUIT_PRESETS.map((preset) => {
-            const isActive = activePresetId === preset.id;
-            return (
-              <button
-                key={preset.id}
-                type="button"
-                onClick={() => handleLoadPreset(preset)}
-                title={`${preset.title} — ${preset.subtitle}`}
-                className={`whitespace-nowrap shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-                  isActive
-                    ? 'bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200/80 font-semibold'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-              >
-                {preset.shortTitle}
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={handleClearCanvas}
-            className={`whitespace-nowrap shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
-              activePresetId === 'empty'
-                ? 'bg-white text-rose-700 shadow-2xs ring-1 ring-rose-200 font-semibold'
-                : 'text-slate-600 hover:text-rose-700 hover:bg-white/50'
-            }`}
-          >
-            Mạch trống
-          </button>
-        </nav>
-
-        <div className="shrink-0 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => handleRunSimulation()}
-            title="Chạy mô phỏng (Ctrl+Enter)"
-            className="relative inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 active:scale-[0.99] transition-all shadow-2xs whitespace-nowrap shrink-0"
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Chạy mô phỏng</span>
-            {needsRerun && (
-              <span
-                className="w-2 h-2 rounded-full bg-amber-300 ring-2 ring-blue-600"
-                title="Mạch vừa thay đổi, nhấn để cập nhật kết quả"
-              />
-            )}
-          </button>
-        </div>
-      </header>
-
-      {/* Workspace Toolbar: Bố cục gọn — Chế độ phân tích — Công cụ vẽ & Tệp */}
-      <div className="h-11 shrink-0 bg-white/80 backdrop-blur-sm border-b border-slate-200/80 px-3 flex items-center justify-between gap-3 overflow-x-auto">
-        <div className="flex items-center gap-2.5 shrink-0">
+      {/* Thanh tiêu đề hợp nhất tối giản: Bố cục — Thương hiệu & Mạch mẫu — Chế độ — Tệp & Mô phỏng */}
+      <header className="h-12 shrink-0 bg-white border-b border-slate-200/80 px-3 flex items-center justify-between gap-2 z-30">
+        {/* Trái: Nút thu gọn thư viện, Logo & Menu Mạch mẫu */}
+        <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             onClick={() => setShowPalette((v) => !v)}
-            aria-label={showPalette ? 'Thu gọn thư viện phần tử' : 'Mở thư viện phần tử'}
-            title={showPalette ? 'Ẩn thư viện bên trái' : 'Hiện thư viện bên trái'}
-            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+            aria-label={showPalette ? 'Thu gọn thư viện linh kiện' : 'Mở thư viện linh kiện'}
+            title={showPalette ? 'Ẩn thư viện linh kiện' : 'Hiện thư viện linh kiện'}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
           >
             {showPalette ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeftOpen className="w-4 h-4" />}
           </button>
 
-          <div className="w-px h-4 bg-slate-200" />
+          <a
+            href="#top"
+            onClick={(e) => e.preventDefault()}
+            className="flex items-center gap-2 text-sm font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
+          >
+            <span className="w-6.5 h-6.5 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-2xs">
+              <Zap className="w-3.5 h-3.5 fill-current" />
+            </span>
+            <span className="hidden sm:inline">MạchĐiệnLab</span>
+          </a>
 
-          {/* Chọn chế độ mô phỏng */}
-          <div className="flex items-center gap-0.5 bg-slate-100/90 p-0.5 rounded-lg border border-slate-200/70">
-            {(
-              [
-                { id: 'DC', label: 'Một chiều (DC)' },
-                { id: 'DC_SS', label: 'Xác lập DC' },
-                { id: 'AC', label: 'Xoay chiều (AC)' },
-                { id: 'TRANSIENT', label: 'Quá độ' },
-              ] as const
-            ).map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => {
-                  setMode(m.id);
-                  const res = runSimulation(circuit, m.id, { dt, tEnd });
-                  setSimulationResult(res);
-                  setShowInspector(true);
-                  if (m.id === 'TRANSIENT' && res.success) setInspectorTab('PLOT');
-                  else setInspectorTab('RESULTS');
-                }}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap transition-all ${
-                  mode === m.id
-                    ? 'bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200/70'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
+          <div className="w-px h-4 bg-slate-200 mx-0.5 shrink-0" />
+
+          {/* Dropdown chọn mạch mẫu gọn gàng */}
+          <div ref={presetMenuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setPresetMenuOpen((v) => !v)}
+              aria-expanded={presetMenuOpen}
+              aria-haspopup="menu"
+              title="Chọn mạch mẫu hoặc tạo mạch trống"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-all whitespace-nowrap ${
+                presetMenuOpen
+                  ? 'bg-slate-100 border-slate-300 text-slate-900'
+                  : 'bg-slate-50/80 border-slate-200/80 text-slate-700 hover:bg-slate-100 hover:border-slate-300'
+              }`}
+            >
+              <FolderOpen className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span className="max-w-[130px] truncate">
+                {activePreset
+                  ? activePreset.shortTitle
+                  : activePresetId === 'empty'
+                    ? 'Mạch trống'
+                    : 'Mạch tùy chỉnh'}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            </button>
+
+            {presetMenuOpen && (
+              <div
+                role="menu"
+                className="absolute left-0 mt-1.5 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 z-50"
               >
-                {m.label}
-              </button>
-            ))}
+                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                  Mạch mẫu tích hợp
+                </div>
+                <div className="space-y-0.5">
+                  {CIRCUIT_PRESETS.map((preset) => {
+                    const isActive = activePresetId === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        role="menuitem"
+                        type="button"
+                        onClick={() => {
+                          handleLoadPreset(preset);
+                          setPresetMenuOpen(false);
+                        }}
+                        className={`w-full flex items-start justify-between gap-2 px-2.5 py-2 rounded-lg text-left transition-colors ${
+                          isActive ? 'bg-blue-50/90 text-blue-900' : 'hover:bg-slate-50 text-slate-800'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate">{preset.title}</div>
+                          <div className="text-[11px] text-slate-500 truncate mt-0.5">{preset.subtitle}</div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                            {preset.recommendedMode === 'TRANSIENT' ? 'Quá độ' : preset.recommendedMode}
+                          </span>
+                          {isActive && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="my-1 border-t border-slate-100" />
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    handleClearCanvas();
+                    setPresetMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    activePresetId === 'empty'
+                      ? 'bg-rose-50 text-rose-700'
+                      : 'text-rose-600 hover:bg-rose-50/70'
+                  }`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Tạo mạch trống mới</span>
+                </button>
+              </div>
+            )}
           </div>
-
-          {mode === 'TRANSIENT' && (
-            <div className="flex items-center gap-2 pl-1 text-[11px] font-mono tabular-nums">
-              <label className="flex items-center gap-1 text-slate-600">
-                <span>Δt:</span>
-                <DraftNumInput
-                  ariaLabel="Bước thời gian Δt"
-                  value={dt}
-                  min={1e-6}
-                  onChange={(v) => setDt(v)}
-                  className="w-20 px-2 py-0.5 bg-white border border-slate-200 rounded-md text-xs focus:outline-none focus:border-blue-500"
-                />
-                <span>s</span>
-              </label>
-              <label className="flex items-center gap-1 text-slate-600">
-                <span>T_end:</span>
-                <DraftNumInput
-                  ariaLabel="Thời gian kết thúc T_end"
-                  value={tEnd}
-                  min={1e-4}
-                  onChange={(v) => setTEnd(v)}
-                  className="w-16 px-2 py-0.5 bg-white border border-slate-200 rounded-md text-xs focus:outline-none focus:border-blue-500"
-                />
-                <span>s</span>
-              </label>
-            </div>
-          )}
         </div>
 
-        {/* Công cụ chỉnh sửa & JSON */}
+        {/* Giữa: Bộ chọn 4 chế độ mô phỏng */}
+        <div
+          role="group"
+          aria-label="Chế độ mô phỏng"
+          className="flex items-center gap-0.5 bg-slate-100/90 p-0.5 rounded-xl border border-slate-200/70 shrink-0"
+        >
+          {(
+            [
+              { id: 'DC', label: 'DC', title: 'Phân tích một chiều (DC)' },
+              { id: 'DC_SS', label: 'Xác lập DC', title: 'Xác lập một chiều (C hở mạch, L ngắn mạch)' },
+              { id: 'AC', label: 'AC', title: 'Xoay chiều xác lập & đa tần số (AC Phasor)' },
+              { id: 'TRANSIENT', label: 'Quá độ', title: 'Phân tích quá độ miền thời gian (Backward Euler)' },
+            ] as const
+          ).map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              title={m.title}
+              onClick={() => {
+                setMode(m.id);
+                const res = runSimulation(circuit, m.id, { dt, tEnd });
+                setSimulationResult(res);
+                setShowInspector(true);
+                if (m.id === 'TRANSIENT' && res.success) setInspectorTab('PLOT');
+                else setInspectorTab('RESULTS');
+              }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                mode === m.id
+                  ? 'bg-white text-slate-900 shadow-2xs ring-1 ring-slate-200/80 font-semibold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Phải: Tệp JSON, Hướng dẫn nhanh, Chạy mô phỏng & Toggle bảng phải */}
         <div className="flex items-center gap-1 shrink-0">
-          <div className="flex items-center gap-0.5 bg-slate-100/90 p-0.5 rounded-lg border border-slate-200/70">
-            <button
-              type="button"
-              onClick={() => {
-                setTool('SELECT');
-                setPlacingType(null);
-              }}
-              title="Chọn & Di chuyển (Phím V)"
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-all ${
-                tool === 'SELECT' && !placingType
-                  ? 'bg-white text-blue-700 shadow-2xs ring-1 ring-slate-200/70'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <MousePointer className="w-3.5 h-3.5" />
-              <span>Chọn</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setTool('WIRE');
-                setPlacingType(null);
-              }}
-              title="Vẽ dây dẫn trực giao (Phím W)"
-              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-all ${
-                tool === 'WIRE'
-                  ? 'bg-white text-blue-700 shadow-2xs ring-1 ring-slate-200/70'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Cable className="w-3.5 h-3.5" />
-              <span>Nối dây</span>
-            </button>
-          </div>
-
-          <div className="w-px h-4 bg-slate-200 mx-1" />
-
-          <button
-            type="button"
-            disabled={!selectedElementId}
-            onClick={() => selectedElementId && handleRotateElement(selectedElementId)}
-            aria-label="Xoay phần tử đang chọn"
-            title="Xoay 90° (R)"
-            className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
-          >
-            <RotateCw className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            disabled={!selectedElementId && !selectedWireId}
-            onClick={() => {
-              if (selectedElementId) handleDeleteElement(selectedElementId);
-              else if (selectedWireId) handleDeleteWire(selectedWireId);
-            }}
-            aria-label="Xóa đối tượng đang chọn"
-            title="Xóa (Delete)"
-            className="p-1.5 rounded-lg text-slate-600 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-35 transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-
-          <div className="w-px h-4 bg-slate-200 mx-1" />
-
-          <button
-            type="button"
-            disabled={historyPast.length === 0}
-            onClick={handleUndo}
-            aria-label="Hoàn tác"
-            title="Hoàn tác (Ctrl+Z)"
-            className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
-          >
-            <Undo2 className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            disabled={historyFuture.length === 0}
-            onClick={handleRedo}
-            aria-label="Làm lại"
-            title="Làm lại (Ctrl+Shift+Z)"
-            className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
-          >
-            <Redo2 className="w-3.5 h-3.5" />
-          </button>
-
-          <div className="w-px h-4 bg-slate-200 mx-1" />
-
-          <button
-            type="button"
-            onClick={handleExportJson}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-100 whitespace-nowrap transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Xuất JSON</span>
-          </button>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-100 whitespace-nowrap transition-colors"
+            title="Mở tệp mạch điện (.json)"
+            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 whitespace-nowrap transition-colors"
           >
             <Upload className="w-3.5 h-3.5" />
-            <span>Nhập JSON</span>
+            <span className="hidden md:inline">Nhập</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleExportJson()}
+            title="Lưu mạch điện thành tệp JSON (Ctrl+S)"
+            className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 whitespace-nowrap transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Xuất JSON</span>
           </button>
           <input
             ref={fileInputRef}
@@ -797,7 +853,33 @@ export default function App() {
             className="hidden"
           />
 
-          <div className="w-px h-4 bg-slate-200 mx-1" />
+          <button
+            type="button"
+            onClick={() => setShowHelpModal(true)}
+            aria-label="Hướng dẫn nhanh và phím tắt"
+            title="Hướng dẫn nhanh & Phím tắt"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+          >
+            <HelpCircle className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleRunSimulation()}
+            title="Chạy mô phỏng (Ctrl+Enter)"
+            className="relative inline-flex items-center gap-1.5 ml-1 px-3.5 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 active:scale-[0.99] transition-all shadow-2xs whitespace-nowrap"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            <span>Chạy</span>
+            {needsRerun && (
+              <span
+                className="w-2 h-2 rounded-full bg-amber-300 ring-2 ring-blue-600"
+                title="Mạch vừa thay đổi, nhấn để cập nhật kết quả"
+              />
+            )}
+          </button>
+
+          <div className="w-px h-4 bg-slate-200 mx-0.5" />
 
           <button
             type="button"
@@ -809,7 +891,7 @@ export default function App() {
             {showInspector ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
           </button>
         </div>
-      </div>
+      </header>
 
       {importError && (
         <div className="bg-rose-50 border-b border-rose-200 px-4 py-1.5 text-xs text-rose-800 flex items-center justify-between">
@@ -844,6 +926,11 @@ export default function App() {
           selectedWireId={selectedWireId}
           tool={tool}
           placingType={placingType}
+          mode={mode}
+          dt={dt}
+          tEnd={tEnd}
+          canUndo={historyPast.length > 0}
+          canRedo={historyFuture.length > 0}
           simulationResult={simulationResult}
           fitTrigger={fitTrigger}
           onSelectElement={(id) => {
@@ -854,6 +941,11 @@ export default function App() {
             }
           }}
           onSelectWire={setSelectedWireId}
+          onSelectTool={setTool}
+          onChangeDt={setDt}
+          onChangeTEnd={setTEnd}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
           onPlaceComponent={handlePlaceComponent}
           onBeginDragElement={() => pushHistory(circuit)}
           onMoveElement={handleMoveElement}
@@ -887,6 +979,160 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Hộp thoại đặt tên tệp dự phòng khi trình duyệt không hỗ trợ showSaveFilePicker */}
+      {showExportModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-[2px] flex items-center justify-center p-4"
+          onMouseDown={() => setShowExportModal(false)}
+        >
+          <form
+            onSubmit={handleConfirmFallbackExport}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-xl p-5 space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Lưu sơ đồ mạch (JSON)</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Đặt tên tệp trước khi tải về máy ({circuit.elements.length} phần tử, {circuit.wires.length} dây).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                aria-label="Đóng hộp thoại lưu tệp"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <label className="block space-y-1.5">
+              <span className="block text-xs font-medium text-slate-700">Tên tệp lưu</span>
+              <div className="flex items-center border border-slate-300 rounded-xl bg-white overflow-hidden focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/15">
+                <input
+                  type="text"
+                  autoFocus
+                  onFocus={(e) => e.currentTarget.select()}
+                  value={exportFilename}
+                  onChange={(e) => setExportFilename(e.target.value)}
+                  placeholder="mach-dien"
+                  className="flex-1 px-3 py-2 text-xs font-mono text-slate-900 focus:outline-none"
+                />
+                <span className="px-3 py-2 text-xs font-mono text-slate-500 bg-slate-50 border-l border-slate-200">
+                  .json
+                </span>
+              </div>
+            </label>
+
+            <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 border border-slate-200/70 rounded-xl px-3 py-2">
+              Trình duyệt hiện tại không cấp API chọn thư mục trực tiếp (thường gặp trên Firefox, Safari hoặc mở tệp cục bộ <code className="font-mono">file://</code>). Tệp sẽ tải về thư mục mặc định hoặc theo tùy chọn hỏi vị trí lưu của trình duyệt.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors shadow-2xs"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Lưu tệp</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Hộp thoại Hướng dẫn nhanh & Phím tắt */}
+      {showHelpModal && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/35 backdrop-blur-[2px] flex items-center justify-center p-4"
+          onMouseDown={() => setShowHelpModal(false)}
+        >
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            className="w-full max-w-lg bg-white border border-slate-200 rounded-2xl shadow-xl p-5 space-y-4"
+          >
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Làm quen nhanh · MạchĐiệnLab v1.4</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Thao tác thiết kế sơ đồ & mô phỏng mạch điện trực quan
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(false)}
+                aria-label="Đóng hướng dẫn"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
+                <div className="font-semibold text-blue-700">1. Đặt linh kiện</div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Kéo từ cột trái hoặc nhấp chọn rồi click lên lưới. Nhấn <kbd className="px-1 bg-white border rounded font-mono">R</kbd> để xoay.
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
+                <div className="font-semibold text-blue-700">2. Nối dây vuông góc</div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Nhấn <kbd className="px-1 bg-white border rounded font-mono">W</kbd> hoặc click thẳng vào chân linh kiện. Dây cắt chéo không tự chập.
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
+                <div className="font-semibold text-blue-700">3. Chạy mô phỏng</div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Chọn chế độ ở thanh trên rồi bấm <strong>Chạy</strong> (<kbd className="px-1 bg-white border rounded font-mono">Ctrl+Enter</kbd>).
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Phím tắt thường dùng
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                {[
+                  ['V / W', 'Công cụ Chọn / Nối dây'],
+                  ['Space', 'Đảo góc bẻ khi nối dây'],
+                  ['R', 'Xoay phần tử 90°'],
+                  ['F', 'Khớp sơ đồ vào khung nhìn'],
+                  ['Del', 'Xóa phần tử hoặc dây đang chọn'],
+                  ['Ctrl + Z / Y', 'Hoàn tác / Làm lại'],
+                  ['Ctrl + S', 'Lưu sơ đồ ra tệp JSON'],
+                  ['Ctrl + Enter', 'Chạy mô phỏng ngay'],
+                ].map(([key, desc]) => (
+                  <div key={key} className="flex items-center justify-between gap-2 py-1 border-b border-slate-100">
+                    <span className="text-slate-600">{desc}</span>
+                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-slate-100 border border-slate-200 rounded text-slate-700 shrink-0">
+                      {key}
+                    </kbd>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Thông báo xác nhận thao tác lưu tệp */}
+      {toastMessage && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white text-xs px-3.5 py-2 rounded-full shadow-lg flex items-center gap-2 pointer-events-none">
+          <Check className="w-3.5 h-3.5 text-emerald-400" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

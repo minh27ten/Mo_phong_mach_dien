@@ -48,15 +48,15 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
   return (
     <aside
       aria-label="Thư viện phần tử mạch điện"
-      className="w-64 shrink-0 bg-white border-r border-slate-200/90 flex flex-col h-full select-none"
+      className="w-60 shrink-0 bg-white border-r border-slate-200/80 flex flex-col h-full select-none"
     >
-      <div className="p-3 border-b border-slate-100 space-y-2">
-        <div className="flex items-center justify-between">
+      <div className="p-2.5 border-b border-slate-100 space-y-2">
+        <div className="flex items-center justify-between px-0.5">
           <div className="flex items-center gap-1.5">
             <h2 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-              Thư viện phần tử
+              Linh kiện
             </h2>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600">
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500">
               17+GND
             </span>
           </div>
@@ -77,9 +77,9 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm điện trở, Z, op-amp, 3 pha..."
+            placeholder="Tìm R, C, L, Z, op-amp..."
             aria-label="Tìm kiếm phần tử mạch điện"
-            className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50/80 border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 transition-all"
+            className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50/90 border border-slate-200/80 rounded-lg focus:outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/15 transition-all"
           />
           {query && (
             <button
@@ -96,7 +96,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
         {activeMeta && (
           <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200/80 text-[11px] text-blue-900">
             <span className="truncate font-medium">Đang đặt: {activeMeta.shortLabel}</span>
-            <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-white border border-blue-200 text-blue-700 shrink-0">
+            <kbd className="text-[10px] font-mono px-1 rounded bg-white border border-blue-200 text-blue-700 shrink-0">
               Esc
             </kbd>
           </div>
@@ -113,7 +113,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
               <button
                 type="button"
                 onClick={() => toggleCategory(cat.id)}
-                className="w-full flex items-center justify-between px-1.5 py-1 text-[11px] font-semibold text-slate-500 hover:text-slate-800 rounded transition-colors"
+                className="w-full flex items-center justify-between px-1 py-0.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 rounded transition-colors"
               >
                 <span>{cat.label}</span>
                 {!query.trim() && (
@@ -126,7 +126,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
               </button>
 
               {!isCollapsed && (
-                <div className="grid grid-cols-2 gap-1.5 mt-1">
+                <div className="grid grid-cols-2 gap-1.5 mt-1.5">
                   {items.map((item) => {
                     const isActive = placingType === item.type;
                     return (
@@ -140,17 +140,13 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
                         }}
                         onClick={() => onSelectPlaceType(isActive ? null : item.type)}
                         title={`${item.label} — ${item.description}`}
-                        className={`group flex flex-col items-center gap-1 p-2 rounded-lg border text-center transition-all ${
+                        className={`group flex flex-col items-center gap-1 py-2 px-1.5 rounded-xl border text-center transition-all ${
                           isActive
-                            ? 'bg-blue-50/90 border-blue-500 ring-1 ring-blue-500/30 text-blue-900 shadow-xs'
-                            : 'bg-slate-50/50 border-slate-200/70 hover:bg-white hover:border-slate-300 hover:shadow-xs text-slate-800'
+                            ? 'bg-blue-50/90 border-blue-500 ring-1 ring-blue-500/25 text-blue-900 shadow-2xs'
+                            : 'bg-slate-50/40 border-slate-200/60 hover:bg-white hover:border-slate-300/90 hover:shadow-2xs text-slate-700'
                         }`}
                       >
-                        <div
-                          className={`w-full h-9 rounded-md flex items-center justify-center transition-colors ${
-                            isActive ? 'bg-white' : 'bg-white border border-slate-100 group-hover:border-slate-200'
-                          }`}
-                        >
+                        <div className="w-full h-8 flex items-center justify-center">
                           <ComponentSymbol type={item.type} selected={isActive} isPaletteIcon />
                         </div>
                         <div className="w-full text-[11px] font-medium leading-tight truncate">
@@ -172,9 +168,8 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
         )}
       </div>
 
-      <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/60 text-[11px] text-slate-500 flex items-center justify-between gap-2">
-        <span>Kéo hoặc nhấp đặt lên lưới</span>
-        <span className="font-mono text-[10px] text-slate-400">W: Nối dây</span>
+      <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/40 text-[11px] text-slate-400 text-center">
+        Kéo thả hoặc nhấp đặt lên lưới
       </div>
     </aside>
   );

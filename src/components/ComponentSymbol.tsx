@@ -345,6 +345,36 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
     }
   };
 
+  const renderHitbox = () => {
+    switch (type) {
+      case 'GND':
+        return <rect x={-20} y={-14} width={40} height={32} rx={6} fill="transparent" stroke="none" pointerEvents="all" />;
+      case 'V_SRC':
+      case 'I_SRC':
+      case 'VCVS':
+      case 'CCVS':
+      case 'VCCS':
+      case 'CCCS':
+        return <rect x={-24} y={-34} width={48} height={68} rx={8} fill="transparent" stroke="none" pointerEvents="all" />;
+      case 'RESISTOR':
+      case 'CAPACITOR':
+      case 'INDUCTOR':
+      case 'IMPEDANCE':
+      case 'ONE_PORT':
+        return <rect x={-34} y={-18} width={68} height={36} rx={6} fill="transparent" stroke="none" pointerEvents="all" />;
+      case 'MUTUAL':
+        return <rect x={-32} y={-20} width={64} height={40} rx={6} fill="transparent" stroke="none" pointerEvents="all" />;
+      case 'OPAMP':
+        return <rect x={-32} y={-34} width={64} height={68} rx={6} fill="transparent" stroke="none" pointerEvents="all" />;
+      case 'TWO_PORT':
+        return <rect x={-52} y={-50} width={104} height={100} rx={6} fill="transparent" stroke="none" pointerEvents="all" />;
+      case 'THREE_PHASE_SRC':
+      case 'THREE_PHASE_LINE':
+      case 'THREE_PHASE_LOAD':
+        return <rect x={-52} y={-72} width={104} height={144} rx={6} fill="transparent" stroke="none" pointerEvents="all" />;
+    }
+  };
+
   if (isPaletteIcon) {
     const isLarge =
       type === 'THREE_PHASE_SRC' ||
@@ -359,7 +389,12 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
     );
   }
 
-  return <g>{renderGlyph()}</g>;
+  return (
+    <g>
+      {renderHitbox()}
+      {renderGlyph()}
+    </g>
+  );
 };
 
 function formatComplexOhms(value?: ComplexInput, fallbackRe = 40, fallbackIm = 30): string {

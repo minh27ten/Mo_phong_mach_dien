@@ -12,8 +12,8 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
 
 | Tệp phát hành (GitHub Releases) | Dung lượng | Hệ điều hành | Cách sử dụng |
 | :--- | :---: | :--- | :--- |
-| **`MachDienLab-VI.exe`** | ~1.10 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, không cần cài thêm DLL rời). |
-| **`MachDienLab-VI-Portable.html`** | ~413 KB | Windows / macOS / Linux | Một tệp HTML duy nhất tự chứa toàn bộ ứng dụng — nhấn đúp để mở offline bằng bất kỳ trình duyệt hiện đại nào (Edge, Chrome, Firefox, Safari) qua `file://`. |
+| **`MachDienLab-VI.exe`** | ~1.05 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, hỗ trợ hộp thoại lưu tệp gốc Windows). |
+| **`MachDienLab-VI-Portable.html`** | ~460 KB | Windows / macOS / Linux | Một tệp HTML duy nhất tự chứa toàn bộ ứng dụng — nhấn đúp để mở offline bằng bất kỳ trình duyệt hiện đại nào (Edge, Chrome, Firefox, Safari) qua `file://`. |
 
 *Hoặc chạy trực tiếp bản web nếu đã bật GitHub Pages tại https://minh27ten.github.io/Mo_phong_mach_dien/.*
 
@@ -35,7 +35,7 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
   - **Mạng hai cửa:** Chọn 2 cặp nút Cửa 1 và Cửa 2 để tính trực tiếp ma trận thông số $[Z]$, $[Y]$ và $[A]$.
 - **Hệ thống điện 3 pha & Sơ đồ trực quan:**
   - Nguồn 3 pha, đường dây có tổng trở dây trung tính $Z_N$, tải 3 pha $Y/\Delta$ hỗ trợ tải không đối xứng và tính **điện áp lệch trung tính $U_{N'N}$**.
-  - Lưới vẽ `20 px`, nối dây trực giao bẻ góc (`Space` đảo góc), hiển thị số đo ngay trên mạch, 6 mạch mẫu (*RLC & Hỗ cảm*, *Op-Amp & Phụ thuộc*, *Hệ thống 3 pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*, *Hỗ cảm Z*) và Xuất / Nhập tệp JSON.
+  - Lưới vẽ `20 px`, nối dây trực giao bẻ góc (`Space` đảo góc), vùng nhận diện click tối ưu cho mọi phần tử (`R`, `C`, `L`, `Z`, `GND`...), thanh công cụ nổi tối giản kèm hộp thoại hướng dẫn nhanh (`?`), hiển thị số đo ngay trên mạch, 6 mạch mẫu (*RLC & Hỗ cảm*, *Op-Amp & Phụ thuộc*, *Hệ thống 3 pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*, *Hỗ cảm Z*) và Xuất / Nhập tệp JSON với hộp thoại chọn tên & thư mục lưu.
 
 ---
 

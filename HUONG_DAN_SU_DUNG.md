@@ -22,9 +22,9 @@ Tài liệu hướng dẫn chi tiết cách vẽ sơ đồ, thiết lập thông
 
 Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
-- **Thanh tiêu đề & chế độ (Trên cùng):** Chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*, *Hỗ cảm Z*, hoặc *Mạch trống*), chuyển đổi chế độ giải (*DC*, *DC Xác lập*, *AC Phasor*, *Quá độ*), nhập `Δt` / `T_end` khi ở chế độ Quá độ, các nút công cụ (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo*, *Xuất/Nhập JSON*) và nút **Chạy mô phỏng**.
-- **Thư viện linh kiện (Cột trái):** Chứa 17 phần tử chuyên ngành điện + ký hiệu Đất (`GND`), có ô tìm kiếm nhanh theo tên hoặc ký hiệu (`R`, `Z`, `C`, `op-amp`, `3 pha`, ...). Nhấp nút thu gọn ở góc trên bên trái thanh công cụ nếu muốn mở rộng không gian vẽ.
-- **Bản vẽ sơ đồ (Giữa):** Lưới tọa độ `20 px` giúp căn thẳng hàng linh kiện và dây dẫn, kèm công tắc **Hiển thị số đo** (hiển thị điện áp nút `N...` và dòng nhánh `I=...` trực tiếp trên mạch) và cụm thu phóng (`+`, `−`, *Khớp khung nhìn*).
+- **Thanh tiêu đề hợp nhất (Trên cùng):** Nút thu gọn/mở thư viện linh kiện, menu chọn nhanh mạch mẫu (*RLC & Hỗ cảm M*, *Op-Amp & VCVS*, *Hệ thống 3 Pha*, *Nguồn hỗn hợp*, *1-Cửa P_max*, *Hỗ cảm Z*, hoặc *Tạo mạch trống mới*), bộ chọn 4 chế độ giải (*DC*, *Xác lập DC*, *AC*, *Quá độ*), nút *Nhập / Xuất JSON*, nút hướng dẫn nhanh **`?`** và nút **Chạy**.
+- **Thư viện linh kiện (Cột trái):** Chứa 17 phần tử chuyên ngành điện + ký hiệu Đất (`GND`), có ô tìm kiếm nhanh theo tên hoặc ký hiệu (`R`, `Z`, `C`, `op-amp`, `3 pha`, ...).
+- **Bản vẽ sơ đồ (Giữa):** Lưới tọa độ `20 px`, thanh công cụ vẽ nổi ở phía trên (*Chọn*, *Nối dây*, *Xoay*, *Xóa*, *Undo/Redo* và `Δt` / `T_end` khi chọn chế độ *Quá độ*), công tắc **Nhãn mạch** (hiển thị điện áp nút `N...` và dòng nhánh `I=...` trực tiếp trên mạch) và cụm thu phóng (`+`, `−`, *Khớp khung nhìn*).
 - **Bảng Thông số & Kết quả (Cột phải):** Gồm 4 thẻ:
   - **Thông số:** Chỉnh sửa thuộc tính của phần tử hoặc dây đang chọn.
   - **Kết quả:** Xem thẻ *Xếp chồng đa tần số* (khi mạch có nhiều tần số / sóng hài), *Cân bằng công suất* (`P`, `Q`), bảng *Điện thế các nút*, bảng *Dòng điện & Công suất phần tử*, và nhấp chọn từng dòng để xem thẻ **Phổ hài & Tức thời**.
@@ -65,6 +65,7 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 | `Esc` | Hủy lệnh vẽ dây, hủy đặt linh kiện hoặc bỏ chọn |
 | `Ctrl + Z` | Hoàn tác (Undo, lưu tối đa 40 bước) |
 | `Ctrl + Y` / `Ctrl + Shift + Z` | Làm lại (Redo) |
+| `Ctrl + S` | Mở hộp thoại lưu sơ đồ mạch ra tệp JSON |
 | `Ctrl + Enter` | Thực thi **Chạy mô phỏng** ngay |
 | Lăn chuột / Kéo khoảng trống | Phóng to / thu nhỏ tại tâm con trỏ & trượt khung nhìn |
 
@@ -156,8 +157,8 @@ Mở thẻ **Tương đương** ở cột bên phải:
 
 ## 8. Lưu & mở lại mạch bằng tệp JSON
 
-- Nhấn **Xuất JSON** trên thanh công cụ để tải về toàn bộ cấu trúc linh kiện và dây dẫn dưới dạng tệp `mach-dien-<timestamp>.json`.
-- Nhấn **Nhập JSON** để tải lại tệp đã lưu. Trình nhập sẽ kiểm tra cấu trúc tọa độ, loại linh kiện và tham số mô phỏng trước khi nạp vào khung vẽ; nếu tệp sai định dạng, hệ thống sẽ báo lỗi rõ ràng mà không làm mất sơ đồ hiện tại.
+- Nhấn **Xuất JSON** (hoặc `Ctrl + S`) để mở hộp thoại lưu tệp — cho phép tùy chỉnh tên tệp và chọn thư mục lưu trữ trên máy tính (trên trình duyệt Chrome/Edge hoặc ứng dụng Desktop `.exe`; các trình duyệt không hỗ trợ chọn thư mục trực tiếp sẽ hiển thị hộp thoại đặt tên tệp trước khi tải về).
+- Nhấn **Nhập** để tải lại tệp đã lưu. Trình nhập sẽ kiểm tra cấu trúc tọa độ, loại linh kiện và tham số mô phỏng trước khi nạp vào khung vẽ; nếu tệp sai định dạng, hệ thống sẽ báo lỗi rõ ràng mà không làm mất sơ đồ hiện tại.
 
 ---
 

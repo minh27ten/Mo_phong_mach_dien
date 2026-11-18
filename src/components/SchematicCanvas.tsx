@@ -2,18 +2,23 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   AlertTriangle,
+  Cable,
   Eye,
   EyeOff,
   Info,
   Maximize2,
   Minus,
+  MousePointer,
   Plus,
+  Redo2,
   RotateCw,
   Trash2,
+  Undo2,
 } from 'lucide-react';
 import {
   CircuitElement,
   ComponentType,
+  SimulationMode,
   SimulationResult,
   Wire,
   WirePoint,
@@ -28,6 +33,7 @@ import {
 } from '../engine/pins';
 import { buildNetlist, NetlistGraph } from '../engine/netlist';
 import { ComponentSymbol, getElementSummaryText } from './ComponentSymbol';
+import { DraftNumInput } from './DraftNumInput';
 
 export type EditorTool = 'SELECT' | 'WIRE';
 
@@ -39,10 +45,20 @@ interface SchematicCanvasProps {
   selectedWireId: string | null;
   tool: EditorTool;
   placingType: ComponentType | null;
+  mode: SimulationMode;
+  dt: number;
+  tEnd: number;
+  canUndo: boolean;
+  canRedo: boolean;
   simulationResult: SimulationResult | null;
   fitTrigger?: number;
   onSelectElement: (id: string | null) => void;
   onSelectWire: (id: string | null) => void;
+  onSelectTool: (tool: EditorTool) => void;
+  onChangeDt: (val: number) => void;
+  onChangeTEnd: (val: number) => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onPlaceComponent: (type: ComponentType, x: number, y: number) => void;
   onMoveElement: (id: string, x: number, y: number) => void;
   onBeginDragElement: () => void;
@@ -51,6 +67,26 @@ interface SchematicCanvasProps {
   onDeleteWire?: (id: string) => void;
   onAddWire: (points: WirePoint[]) => void;
   onCancelPlace: () => void;
+}
+
+function getElementHighlightBox(el: CircuitElement): { x: number; y: number; w: number; h: number } {
+  const isVertical = hasVerticalPins(el);
+  if (el.type.startsWith('THREE_PHASE')) {
+    return isVertical ? { x: -76, y: -68, w: 152, h: 136 } : { x: -68, y: -76, w: 136, h: 152 };
+  }
+  if (el.type === 'TWO_PORT') {
+    return isVertical ? { x: -54, y: -68, w: 108, h: 136 } : { x: -68, y: -54, w: 136, h: 108 };
+  }
+  if (el.type === 'GND') {
+    return { x: -24, y: -26, w: 48, h: 48 };
+  }
+  if (el.type === 'MUTUAL') {
+    return isVertical ? { x: -24, y: -34, w: 48, h: 68 } : { x: -34, y: -24, w: 68, h: 48 };
+  }
+  if (el.type === 'OPAMP') {
+    return isVertical ? { x: -40, y: -44, w: 80, h: 88 } : { x: -44, y: -40, w: 88, h: 80 };
+  }
+  return isVertical ? { x: -26, y: -44, w: 52, h: 88 } : { x: -44, y: -26, w: 88, h: 52 };
 }
 
 function buildOrthogonalPath(a: WirePoint, b: WirePoint, horizontalFirst: boolean): WirePoint[] {
@@ -107,10 +143,20 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   selectedWireId,
   tool,
   placingType,
+  mode,
+  dt,
+  tEnd,
+  canUndo,
+  canRedo,
   simulationResult,
   fitTrigger = 0,
   onSelectElement,
   onSelectWire,
+  onSelectTool,
+  onChangeDt,
+  onChangeTEnd,
+  onUndo,
+  onRedo,
   onPlaceComponent,
   onMoveElement,
   onBeginDragElement,
@@ -133,6 +179,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   const [horizontalFirst, setHorizontalFirst] = useState(true);
   const [manualBendLock, setManualBendLock] = useState(false);
   const [hoveredPinKey, setHoveredPinKey] = useState<string | null>(null);
+  const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
+  const [hoveredWireId, setHoveredWireId] = useState<string | null>(null);
 
   const dragStateRef = useRef<{
     kind: 'PAN' | 'ELEMENT' | null;
@@ -379,15 +427,20 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     }
   };
 
-  const handleSvgMouseUp = () => {
+  const handleSvgMouseUp = useCallback(() => {
     dragStateRef.current = {
       kind: null,
       startClientX: 0,
       startClientY: 0,
-      startPanX: pan.x,
-      startPanY: pan.y,
+      startPanX: viewRef.current.pan.x,
+      startPanY: viewRef.current.pan.y,
     };
-  };
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('mouseup', handleSvgMouseUp);
+    return () => window.removeEventListener('mouseup', handleSvgMouseUp);
+  }, [handleSvgMouseUp]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -591,6 +644,12 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         onMouseDown={handleSvgMouseDown}
         onMouseMove={handleSvgMouseMove}
         onMouseUp={handleSvgMouseUp}
+        onDoubleClick={(e) => {
+          if (!wireDraft || wireDraft.length === 0) return;
+          e.stopPropagation();
+          const pt = clientToWorld(e.clientX, e.clientY, true);
+          finishWireAt(pt);
+        }}
       >
         <defs>
           <pattern
@@ -644,6 +703,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           {/* Dây dẫn */}
           {wires.map((w) => {
             const isSel = selectedWireId === w.id;
+            const isHovered = hoveredWireId === w.id && !isSel && !wireDraft;
             const ptsStr = w.points.map((p) => `${p.x},${p.y}`).join(' ');
             return (
               <g
@@ -654,23 +714,27 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                   onSelectWire(w.id);
                   onSelectElement(null);
                 }}
+                onMouseEnter={() => setHoveredWireId(w.id)}
+                onMouseLeave={() => setHoveredWireId((prev) => (prev === w.id ? null : prev))}
                 className="cursor-pointer"
               >
                 <polyline
                   points={ptsStr}
                   fill="none"
                   stroke="transparent"
-                  strokeWidth={12}
+                  strokeWidth={14}
                   strokeLinejoin="round"
+                  pointerEvents="stroke"
                 />
-                {isSel && (
+                {(isSel || isHovered) && (
                   <polyline
                     points={ptsStr}
                     fill="none"
-                    stroke="#DBEAFE"
+                    stroke={isSel ? '#DBEAFE' : '#E2E8F0'}
                     strokeWidth={6}
                     strokeLinejoin="round"
                     strokeLinecap="round"
+                    pointerEvents="none"
                   />
                 )}
                 <polyline
@@ -729,6 +793,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           {/* Các phần tử mạch điện */}
           {elements.map((el) => {
             const isSel = selectedElementId === el.id;
+            const isElHovered = hoveredElementId === el.id && !isSel && !placingType && !wireDraft;
+            const highlightBox = getElementHighlightBox(el);
             const dotInfo = inductorDots.get(el.id);
             const branchBadge = branchCurrentPositions.get(el.id);
             const pins = pinsByElementId.get(el.id) ?? [];
@@ -742,6 +808,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
               <g
                 key={el.id}
                 transform={`translate(${el.x}, ${el.y})`}
+                onMouseEnter={() => setHoveredElementId(el.id)}
+                onMouseLeave={() => setHoveredElementId((prev) => (prev === el.id ? null : prev))}
                 onMouseDown={(e) => {
                   if (placingType || wireDraft) return;
                   e.stopPropagation();
@@ -763,18 +831,18 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                 }}
                 className="cursor-pointer"
               >
-                {isSel && (
+                {(isSel || isElHovered) && (
                   <rect
-                    x={isThreePhase || isTwoPort ? -72 : -48}
-                    y={isThreePhase ? -76 : -48}
-                    width={isThreePhase || isTwoPort ? 144 : 96}
-                    height={isThreePhase ? 152 : 96}
+                    x={highlightBox.x}
+                    y={highlightBox.y}
+                    width={highlightBox.w}
+                    height={highlightBox.h}
                     rx={8}
-                    fill="#EFF6FF"
-                    fillOpacity={0.5}
-                    stroke="#3B82F6"
-                    strokeWidth={1.2}
-                    strokeDasharray="4 2"
+                    fill={isSel ? '#EFF6FF' : '#F1F5F9'}
+                    fillOpacity={isSel ? 0.55 : 0.65}
+                    stroke={isSel ? '#3B82F6' : '#CBD5E1'}
+                    strokeWidth={isSel ? 1.3 : 1}
+                    strokeDasharray={isSel ? '4 2' : undefined}
                     pointerEvents="none"
                   />
                 )}
@@ -884,7 +952,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                       }
                       className="cursor-crosshair"
                     >
-                      <circle cx={0} cy={0} r={9} fill="transparent" />
+                      <circle cx={0} cy={0} r={10} fill="transparent" pointerEvents="all" />
                       {isPinHovered && (
                         <circle
                           cx={0}
@@ -972,51 +1040,55 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       </svg>
 
       {/* Pill thao tác nhanh ngay trên phần tử / dây được chọn */}
-      {!placingType && !wireDraft && selectedElement && (onRotateElement || onDeleteElement) && (
-        <div
-          style={{
-            left: `${Math.max(96, selectedElement.x * zoom + pan.x)}px`,
-            top: `${Math.max(48, selectedElement.y * zoom + pan.y - 68 * zoom)}px`,
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="absolute -translate-x-1/2 -translate-y-full z-20 flex items-center gap-1 px-1.5 py-1 bg-white/95 backdrop-blur-md border border-slate-200 rounded-lg shadow-md"
-        >
-          <span className="text-[11px] font-mono font-semibold text-slate-700 px-1.5">
-            {selectedElement.name}
-          </span>
-          <div className="w-px h-3.5 bg-slate-200" />
-          {onRotateElement && (
-            <button
-              type="button"
-              onClick={() => onRotateElement(selectedElement.id)}
-              title="Xoay 90° (Phím R)"
-              aria-label={`Xoay nhanh ${selectedElement.name}`}
-              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition-colors"
-            >
-              <RotateCw className="w-3 h-3" />
-              <span>Xoay</span>
-            </button>
-          )}
-          {onDeleteElement && (
-            <button
-              type="button"
-              onClick={() => onDeleteElement(selectedElement.id)}
-              title="Xóa phần tử (Del)"
-              aria-label={`Xóa nhanh ${selectedElement.name}`}
-              className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium text-rose-600 hover:bg-rose-50 transition-colors"
-            >
-              <Trash2 className="w-3 h-3" />
-              <span>Xóa</span>
-            </button>
-          )}
-        </div>
-      )}
+      {!placingType && !wireDraft && selectedElement && (onRotateElement || onDeleteElement) && (() => {
+        const box = getElementHighlightBox(selectedElement);
+        const offsetPx = Math.abs(box.y) * zoom + 12;
+        return (
+          <div
+            style={{
+              left: `${Math.max(96, selectedElement.x * zoom + pan.x)}px`,
+              top: `${Math.max(64, selectedElement.y * zoom + pan.y - offsetPx)}px`,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="absolute -translate-x-1/2 -translate-y-full z-20 flex items-center gap-1 px-1.5 py-1 bg-white/95 backdrop-blur-md border border-slate-200 rounded-lg shadow-md"
+          >
+            <span className="text-[11px] font-mono font-semibold text-slate-700 px-1.5">
+              {selectedElement.name}
+            </span>
+            <div className="w-px h-3.5 bg-slate-200" />
+            {onRotateElement && (
+              <button
+                type="button"
+                onClick={() => onRotateElement(selectedElement.id)}
+                title="Xoay 90° (Phím R)"
+                aria-label={`Xoay nhanh ${selectedElement.name}`}
+                className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <RotateCw className="w-3 h-3" />
+                <span>Xoay</span>
+              </button>
+            )}
+            {onDeleteElement && (
+              <button
+                type="button"
+                onClick={() => onDeleteElement(selectedElement.id)}
+                title="Xóa phần tử (Del)"
+                aria-label={`Xóa nhanh ${selectedElement.name}`}
+                className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium text-rose-600 hover:bg-rose-50 transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Xóa</span>
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {!placingType && !wireDraft && !selectedElement && selectedWireMid && selectedWireId && onDeleteWire && (
         <div
           style={{
             left: `${Math.max(96, selectedWireMid.x * zoom + pan.x)}px`,
-            top: `${Math.max(48, selectedWireMid.y * zoom + pan.y - 16)}px`,
+            top: `${Math.max(64, selectedWireMid.y * zoom + pan.y - 16)}px`,
           }}
           onMouseDown={(e) => e.stopPropagation()}
           className="absolute -translate-x-1/2 -translate-y-full z-20 flex items-center gap-1 px-1.5 py-1 bg-white/95 backdrop-blur-md border border-slate-200 rounded-lg shadow-md"
@@ -1034,23 +1106,145 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         </div>
       )}
 
-      {/* Thông báo hướng dẫn thao tác nhanh khi đang đặt hoặc nối dây */}
-      {(placingType || wireDraft || tool === 'WIRE') && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur-md text-white text-xs px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-2.5 pointer-events-none z-20">
-          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-          <span>
-            {placingType
-              ? 'Nhấp vào lưới để đặt phần tử · Chuột phải hoặc Esc để hủy'
-              : wireDraft
-                ? 'Nhấp chân đích hoặc lưới để nối dây · Space đổi hướng gấp khúc · Esc hủy'
-                : 'Chế độ nối dây: Nhấp vào chân linh kiện hoặc lưới để bắt đầu · Esc thoát'}
-          </span>
+      {/* Thanh công cụ vẽ nổi tối giản & thiết lập Quá độ (trên giữa khung vẽ) */}
+      <div className="absolute top-3 inset-x-3 flex flex-col items-center gap-2 pointer-events-none z-20">
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            className="pointer-events-auto flex items-center gap-0.5 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl p-1 shadow-sm"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                onSelectTool('SELECT');
+                onCancelPlace();
+              }}
+              title="Chọn & Di chuyển (V)"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                tool === 'SELECT' && !placingType
+                  ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200/80'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+              }`}
+            >
+              <MousePointer className="w-3.5 h-3.5" />
+              <span>Chọn</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onSelectTool('WIRE');
+                onCancelPlace();
+              }}
+              title="Vẽ dây dẫn trực giao (W)"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                tool === 'WIRE'
+                  ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200/80'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+              }`}
+            >
+              <Cable className="w-3.5 h-3.5" />
+              <span>Nối dây</span>
+            </button>
+
+            <div className="w-px h-4 bg-slate-200 mx-0.5" />
+
+            <button
+              type="button"
+              disabled={!selectedElementId || !onRotateElement}
+              onClick={() => selectedElementId && onRotateElement?.(selectedElementId)}
+              aria-label="Xoay phần tử đang chọn"
+              title="Xoay 90° (R)"
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={(!selectedElementId || !onDeleteElement) && (!selectedWireId || !onDeleteWire)}
+              onClick={() => {
+                if (selectedElementId) onDeleteElement?.(selectedElementId);
+                else if (selectedWireId) onDeleteWire?.(selectedWireId);
+              }}
+              aria-label="Xóa đối tượng đang chọn"
+              title="Xóa (Delete)"
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-35 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="w-px h-4 bg-slate-200 mx-0.5" />
+
+            <button
+              type="button"
+              disabled={!canUndo}
+              onClick={onUndo}
+              aria-label="Hoàn tác"
+              title="Hoàn tác (Ctrl+Z)"
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={!canRedo}
+              onClick={onRedo}
+              aria-label="Làm lại"
+              title="Làm lại (Ctrl+Shift+Z)"
+              className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {mode === 'TRANSIENT' && (
+            <div
+              onMouseDown={(e) => e.stopPropagation()}
+              className="pointer-events-auto flex items-center gap-2.5 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl px-2.5 py-1 shadow-sm text-[11px] font-mono tabular-nums"
+            >
+              <label className="flex items-center gap-1 text-slate-600">
+                <span>Δt</span>
+                <DraftNumInput
+                  ariaLabel="Bước thời gian Δt"
+                  value={dt}
+                  min={1e-6}
+                  onChange={onChangeDt}
+                  className="w-18 px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded-md text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500"
+                />
+                <span className="text-slate-400">s</span>
+              </label>
+              <div className="w-px h-3.5 bg-slate-200" />
+              <label className="flex items-center gap-1 text-slate-600">
+                <span>T_end</span>
+                <DraftNumInput
+                  ariaLabel="Thời gian kết thúc T_end"
+                  value={tEnd}
+                  min={1e-4}
+                  onChange={onChangeTEnd}
+                  className="w-14 px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded-md text-xs text-slate-900 focus:outline-none focus:bg-white focus:border-blue-500"
+                />
+                <span className="text-slate-400">s</span>
+              </label>
+            </div>
+          )}
         </div>
-      )}
+
+        {(placingType || wireDraft || tool === 'WIRE') && (
+          <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-2.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+            <span>
+              {placingType
+                ? 'Nhấp vào lưới để đặt phần tử · Chuột phải hoặc Esc để hủy'
+                : wireDraft
+                  ? 'Nhấp chân đích, nhấp đúp hoặc chạm dây để nối · Space đổi góc · Esc hủy'
+                  : 'Chế độ nối dây: Nhấp chân linh kiện hoặc lưới để bắt đầu · Esc thoát'}
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* Bảng chẩn đoán mạch điện (góc dưới trái) */}
       {activeDiagnostics.length > 0 && (
-        <div className="absolute bottom-3 left-3 max-w-md space-y-1.5 z-10">
+        <div className="absolute bottom-3 left-3 max-w-[calc(100%-220px)] sm:max-w-md space-y-1.5 z-10">
           {activeDiagnostics.slice(0, 3).map((d, i) => {
             const styles =
               d.level === 'error'
@@ -1075,10 +1269,10 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       {/* Trạng thái trống */}
       {elements.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl px-7 py-6 text-center max-w-sm shadow-sm">
-            <h3 className="text-sm font-semibold text-slate-900 mb-1.5">Sơ đồ mạch đang trống</h3>
+          <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl px-7 py-6 text-center max-w-sm shadow-sm space-y-2">
+            <h3 className="text-sm font-semibold text-slate-900">Bản vẽ đang trống</h3>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Chọn phần tử từ thư viện bên trái để đặt lên lưới, hoặc chọn nhanh một mạch mẫu trên thanh tiêu đề.
+              Kéo linh kiện từ thư viện bên trái lên lưới, nhấp chân linh kiện (hoặc phím <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-200 rounded font-mono text-[10px]">W</kbd>) để nối dây, hoặc mở <strong>Mạch mẫu</strong> ở góc trên.
             </p>
           </div>
         </div>

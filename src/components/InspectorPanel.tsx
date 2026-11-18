@@ -309,47 +309,49 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
 
     return (
       <div className="space-y-3.5">
-        <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-slate-900 truncate">{meta.label}</div>
-            <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{meta.description}</div>
+        <div className="space-y-2.5 pb-3 border-b border-slate-100">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold text-slate-900 truncate">{meta.label}</div>
+              <div className="text-[11px] text-slate-500 mt-0.5 leading-snug">{meta.description}</div>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => onRotateElement(el.id)}
+                aria-label={`Xoay phần tử ${el.name} 90 độ`}
+                title="Xoay 90° (Phím R)"
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => onDeleteElement(el.id)}
+                aria-label={`Xóa phần tử ${el.name}`}
+                title="Xóa phần tử (Del)"
+                className="p-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              type="button"
-              onClick={() => onRotateElement(el.id)}
-              aria-label={`Xoay phần tử ${el.name} 90 độ`}
-              title="Xoay 90° (Phím R)"
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
-            >
-              <RotateCw className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onDeleteElement(el.id)}
-              aria-label={`Xóa phần tử ${el.name}`}
-              title="Xóa phần tử (Del)"
-              className="p-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
 
-        {/* Thẻ định danh cơ bản */}
-        <div className="grid grid-cols-2 gap-2.5 p-2.5 rounded-xl bg-slate-50/70 border border-slate-200/70">
-          <label className="block">
-            <span className="block text-[11px] font-medium text-slate-600 mb-1">Ký hiệu</span>
-            <input
-              type="text"
-              value={el.name}
-              onChange={(e) => update({ name: e.target.value })}
-              className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-            />
-          </label>
-          <div className="block">
-            <span className="block text-[11px] font-medium text-slate-600 mb-1">Góc xoay</span>
-            <div className="px-2.5 py-1.5 text-xs font-mono tabular-nums bg-white border border-slate-200/80 rounded-lg text-slate-700">
+          {/* Định danh & góc xoay gọn nhẹ */}
+          <div className="flex items-center gap-2">
+            <label className="flex-1 flex items-center gap-1.5 bg-slate-50/70 border border-slate-200/80 rounded-lg px-2 py-1 focus-within:bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/15 transition-all">
+              <span className="text-[11px] font-medium text-slate-500 shrink-0">Ký hiệu</span>
+              <input
+                type="text"
+                value={el.name}
+                onChange={(e) => update({ name: e.target.value })}
+                className="w-full min-w-0 bg-transparent text-xs font-mono font-semibold text-slate-900 focus:outline-none text-right"
+              />
+            </label>
+            <div
+              className="shrink-0 px-2.5 py-1 text-[11px] font-mono tabular-nums bg-slate-50/70 border border-slate-200/80 rounded-lg text-slate-600"
+              title="Góc xoay hiện tại"
+            >
               {el.rotation}°
             </div>
           </div>
@@ -1273,12 +1275,17 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </button>
               </div>
             ) : (
-              <div className="text-center py-12 px-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/40">
-                <GitBranch className="w-7 h-7 text-slate-300 mx-auto mb-2.5" />
-                <div className="text-xs font-semibold text-slate-700">Chưa chọn phần tử</div>
-                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                  Nhấp vào một linh kiện hoặc dây dẫn trên sơ đồ để chỉnh sửa thông số, xoay hướng hoặc xóa.
+              <div className="text-center py-10 px-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 space-y-2">
+                <GitBranch className="w-6 h-6 text-slate-300 mx-auto" />
+                <div className="text-xs font-semibold text-slate-700">Chưa chọn đối tượng</div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Nhấp vào linh kiện hoặc dây dẫn trên bản vẽ để chỉnh sửa giá trị, xoay hướng hoặc xóa.
                 </p>
+                <div className="pt-1 flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-slate-400">
+                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">W: Nối dây</span>
+                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">R: Xoay</span>
+                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">Del: Xóa</span>
+                </div>
               </div>
             )}
           </>
