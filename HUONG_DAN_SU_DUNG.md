@@ -35,10 +35,11 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 
 ## 2. Vẽ sơ đồ & nối dây chuẩn kỹ thuật
 
-### Đặt & sắp xếp linh kiện
+### Đặt, chọn & sắp xếp linh kiện
 - **Kéo – thả** phần tử từ cột trái vào lưới bản vẽ, hoặc **nhấp một lần** vào thẻ phần tử trong thư viện rồi nhấp lên vị trí bất kỳ trên bản vẽ.
-- Kéo thả phần tử đang có trên lưới để di chuyển; phần tử tự động bám lưới `20 px`.
-- Nhấp vào phần tử rồi nhấn phím **`R`** (hoặc bấm nút **Xoay 90°** ở thanh pill nổi / thanh công cụ) để xoay góc `0° → 90° → 180° → 270°`.
+- **Chọn & di chuyển chính xác:** Khi rê chuột lên bất kỳ linh kiện nào (kể cả tụ điện `C`, cuộn dây `L`, điện trở `R`, tổng trở `Z` hay `GND`), khung nhận diện sẽ sáng nhẹ để xác nhận vùng click rộng trước khi nhấp chọn hoặc kéo di chuyển theo lưới `20 px`.
+- Nhấp vào phần tử rồi nhấn phím **`R`** (hoặc bấm nút **Xoay 90°** ở thanh pill nổi / thanh công cụ trên bản vẽ) để xoay góc `0° → 90° → 180° → 270°`.
+- Nhấp nút **`?`** ở góc trên bên phải bất cứ lúc nào để mở bảng **Hướng dẫn nhanh & Phím tắt**.
 
 ### Vẽ dây dẫn trực giao (Wire Tool)
 1. Nhấn phím **`W`** hoặc chọn biểu tượng **Nối dây** trên thanh công cụ (cũng có thể **nhấp trực tiếp vào một chân linh kiện** ở chế độ *Chọn* để bắt đầu đi dây ngay).

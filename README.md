@@ -1,8 +1,10 @@
-# MạchĐiệnLab — Phần Mềm Mô Phỏng Mạch Điện & Hệ Thống Điện
+# MạchĐiệnLab — Phần Mềm Mô Phỏng Mạch Điện & Hệ Thống Điện (`v1.4.0`)
 
 **MạchĐiệnLab** là ứng dụng mô phỏng mạch điện và hệ thống điện **chạy 100% cục bộ trên máy người dùng (Pure Client-Side)** dựa trên bộ giải giải tích nút cải biên **Modified Nodal Analysis (MNA)** — không cần máy chủ, không gửi dữ liệu ra ngoài và không cần API key.
 
-> 📖 **Tài liệu hướng dẫn thao tác chi tiết:** Xem [HUONG_DAN_SU_DUNG.md](./HUONG_DAN_SU_DUNG.md).
+- 🌐 **Dùng thử trực tiếp trên trình duyệt:** https://minh27ten.github.io/Mo_phong_mach_dien/
+- 📦 **Tải bản cài đặt / Portable (`v1.4.0`):** https://github.com/minh27ten/Mo_phong_mach_dien/releases/latest
+- 📖 **Tài liệu hướng dẫn thao tác chi tiết:** Xem [HUONG_DAN_SU_DUNG.md](./HUONG_DAN_SU_DUNG.md).
 
 ---
 
@@ -12,10 +14,23 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
 
 | Tệp phát hành (GitHub Releases) | Dung lượng | Hệ điều hành | Cách sử dụng |
 | :--- | :---: | :--- | :--- |
-| **`MachDienLab-VI.exe`** | ~1.05 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, hỗ trợ hộp thoại lưu tệp gốc Windows). |
+| **`MachDienLab-VI.exe`** | ~1.15 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, hỗ trợ hộp thoại lưu tệp gốc Windows). |
 | **`MachDienLab-VI-Portable.html`** | ~460 KB | Windows / macOS / Linux | Một tệp HTML duy nhất tự chứa toàn bộ ứng dụng — nhấn đúp để mở offline bằng bất kỳ trình duyệt hiện đại nào (Edge, Chrome, Firefox, Safari) qua `file://`. |
 
-*Hoặc chạy trực tiếp bản web nếu đã bật GitHub Pages tại https://minh27ten.github.io/Mo_phong_mach_dien/.*
+*Hoặc chạy trực tiếp bản web tại https://minh27ten.github.io/Mo_phong_mach_dien/.*
+
+---
+
+## 🆕 Điểm mới ở `v1.4.0` & Lịch sử phát triển
+
+- **`v1.4.0` — Hitbox chính xác, Hộp thoại Lưu JSON & Giao diện Tối giản:**
+  - **Cải thiện vùng nhận diện thao tác (Hitbox):** Mở rộng vùng click/kéo (`68×36`) phủ trọn thân và khe hở của **Tụ điện (`C`)**, **Cuộn dây (`L`)**, **Điện trở (`R`)**, **Tổng trở (`Z`)**, **1-Cửa (`ONE_PORT`)** và toàn bộ `17 + GND` phần tử; bổ sung khung hover trực quan, khung chọn ôm sát phần tử, tăng độ nhạy chân kết nối (`r = 10`) và dây dẫn (`strokeWidth = 14`), hỗ trợ nhấp đúp hoàn tất đoạn dây đang vẽ.
+  - **Hộp thoại lưu tệp khi xuất JSON (`Xuất JSON` / `Ctrl + S`):** Mở hộp thoại lưu tệp gốc của hệ điều hành (`showSaveFilePicker` trên trình duyệt hỗ trợ và Win32 `GetSaveFileNameW` trên bản Desktop `.exe`) cho phép tùy chỉnh tên tệp và chọn thư mục lưu trữ trước khi lưu; tự động mở hộp thoại đặt tên tệp dự phòng trên Firefox, Safari hoặc khi mở offline qua `file://`.
+  - **Giao diện người dùng (UI/UX) tối giản & trực quan:** Hợp nhất thanh tiêu đề với **Menu thả xuống Mạch mẫu**, bộ chọn 4 chế độ giải (`DC`, `Xác lập DC`, `AC`, `Quá độ`), hộp thoại **Làm quen nhanh & Phím tắt (`?`)**, cùng thanh công cụ vẽ nổi và cấu hình `Δt`/`T_end` ngay trên khung bản vẽ.
+- **`v1.3.0` — Hỗ cảm giữa các Tổng trở phức ($Z_M$):** Hỗ trợ ghép hỗ cảm bất kỳ `L–L`, `Z–Z`, `L–Z` với nhập trực tiếp $Z_M = R_M + jX_M$ hoặc $M$ (H), chọn riêng chân chấm cực tính (`•`) `Chân 1`/`Chân 2`, cùng mạch mẫu #6 (`Hỗ cảm Z`).
+- **`v1.2.0` — Bài toán Mạng 1 cửa tìm $Z_{\text{opt}}$ truyền công suất cực đại ($P_{\max}$):** Giải tối ưu theo 4 ràng buộc (*Liên hợp $Z^*$*, *Thuần trở $R$*, *Cố định $X$*, *Cố định $\varphi$*), vẽ đường cong $P(R_L)$ / $P(|Z_L|)$, kiểm chứng trực tiếp bằng MNA và gán thẳng $Z_{\text{opt}}$ lên mạch (mạch mẫu #5 `1-Cửa P_max`).
+- **`v1.1.0` — Phần tử Tổng trở phức (`IMPEDANCE` / `Z`):** Hỗ trợ nhập đại số $R + jX$ lẫn dạng cực $|Z| \angle \varphi^\circ$ và tự quy đổi sang nhánh $R$-$L$ / $R$-$C$ khi chạy Quá độ.
+- **`v1.0.0` — Nền tảng MNA toàn diện:** 4 chế độ giải (`DC`, `DC_SS`, `AC` xếp chồng đa tần & nguồn hỗn hợp `MIXED`, `TRANSIENT` Backward Euler), `16 + GND` phần tử, hệ 3 pha $Y/\Delta$ & lệch trung tính $U_{N'N}$, trích xuất Thévenin/Norton & Mạng 2 cửa `[Z], [Y], [A]`, vỏ Desktop Rust/WebView2 & HTML Portable.
 
 ---
 
@@ -95,7 +110,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 │   ├── .cargo/config.toml         # Cấu hình +crt-static cho Windows MSVC
 │   ├── Cargo.toml
 │   ├── Cargo.lock
-│   └── src/main.rs                # Nhúng dist-portable/index.html qua giao thức nội bộ
+│   └── src/main.rs                # Nhúng dist-portable/index.html & hộp thoại Lưu tệp Win32 (GetSaveFileNameW)
 ├── src/
 │   ├── engine/                    # Bộ giải toán học & netlist MNA
 │   │   ├── complex.ts             # Đại số số phức
