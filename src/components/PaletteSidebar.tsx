@@ -60,7 +60,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
               17+GND
             </span>
           </div>
-          {placingType && (
+          {placingType ? (
             <button
               type="button"
               onClick={() => onSelectPlaceType(null)}
@@ -68,6 +68,8 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
             >
               Hủy đặt
             </button>
+          ) : (
+            <span className="text-[10px] text-slate-400">Kéo / Click</span>
           )}
         </div>
 
@@ -103,7 +105,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2.5 space-y-3">
+      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
         {CATEGORIES.map((cat) => {
           const items = filtered.filter((c) => c.category === cat.id);
           if (items.length === 0) return null;
@@ -126,7 +128,7 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
               </button>
 
               {!isCollapsed && (
-                <div className="grid grid-cols-2 gap-1.5 mt-1.5">
+                <div className="grid grid-cols-2 gap-1.5 mt-1">
                   {items.map((item) => {
                     const isActive = placingType === item.type;
                     return (
@@ -140,13 +142,13 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
                         }}
                         onClick={() => onSelectPlaceType(isActive ? null : item.type)}
                         title={`${item.label} — ${item.description}`}
-                        className={`group flex flex-col items-center gap-1 py-2 px-1.5 rounded-xl border text-center transition-all ${
+                        className={`group flex flex-col items-center gap-0.5 py-1.5 px-1.5 rounded-xl border text-center transition-all ${
                           isActive
                             ? 'bg-blue-50/90 border-blue-500 ring-1 ring-blue-500/25 text-blue-900 shadow-2xs'
                             : 'bg-slate-50/40 border-slate-200/60 hover:bg-white hover:border-slate-300/90 hover:shadow-2xs text-slate-700'
                         }`}
                       >
-                        <div className="w-full h-8 flex items-center justify-center">
+                        <div className="w-full h-7 flex items-center justify-center">
                           <ComponentSymbol type={item.type} selected={isActive} isPaletteIcon />
                         </div>
                         <div className="w-full text-[11px] font-medium leading-tight truncate">
@@ -166,10 +168,6 @@ export const PaletteSidebar: React.FC<PaletteSidebarProps> = ({
             Không tìm thấy phần tử phù hợp.
           </p>
         )}
-      </div>
-
-      <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/40 text-[11px] text-slate-400 text-center">
-        Kéo thả hoặc nhấp đặt lên lưới
       </div>
     </aside>
   );

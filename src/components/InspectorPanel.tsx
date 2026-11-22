@@ -4,6 +4,7 @@ import {
   Calculator,
   CheckCircle2,
   GitBranch,
+  Play,
   Plus,
   RotateCw,
   Sliders,
@@ -58,6 +59,8 @@ interface InspectorPanelProps {
   onRotateElement: (id: string, deltaDeg?: number) => void;
   onDeleteElement: (id: string) => void;
   onDeleteWire: (id: string) => void;
+  onSelectTool?: (tool: 'SELECT' | 'WIRE_ORTHO' | 'WIRE_DIAG') => void;
+  onRunSimulationNow?: () => void;
   onRunTransientNow: () => void;
   onApplyMaxPowerImpedance?: (params: {
     nodeA: string;
@@ -180,6 +183,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onRotateElement,
   onDeleteElement,
   onDeleteWire,
+  onSelectTool,
+  onRunSimulationNow,
   onRunTransientNow,
   onApplyMaxPowerImpedance,
 }) => {
@@ -1307,32 +1312,64 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             {selectedElement ? (
               renderElementEditor(selectedElement)
             ) : selectedWire ? (
-              <div className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold text-slate-900">Đoạn dây dẫn</div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    {selectedWire.points.length} đỉnh tọa độ trực giao
+              (() => {
+                const hasDiagonal = selectedWire.points.some(
+                  (p, i) =>
+                    i < selectedWire.points.length - 1 &&
+                    p.x !== selectedWire.points[i + 1].x &&
+                    p.y !== selectedWire.points[i + 1].y,
+                );
+                return (
+                  <div className="p-3 rounded-xl bg-slate-50/70 border border-slate-200/80 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-semibold text-slate-900">Đoạn dây dẫn</div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        {selectedWire.points.length} đỉnh · {hasDiagonal ? 'Thẳng / Chéo' : 'Vuông góc 90°'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteWire(selectedWire.id)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-600 text-xs font-medium hover:bg-rose-50 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Xóa dây</span>
+                    </button>
                   </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onDeleteWire(selectedWire.id)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-600 text-xs font-medium hover:bg-rose-50 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>Xóa dây</span>
-                </button>
-              </div>
+                );
+              })()
             ) : (
-              <div className="text-center py-10 px-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 space-y-2">
-                <GitBranch className="w-6 h-6 text-slate-300 mx-auto" />
-                <div className="text-xs font-semibold text-slate-700">Chưa chọn đối tượng</div>
-                <p className="text-[11px] text-slate-500 leading-relaxed">
-                  Nhấp vào linh kiện hoặc dây dẫn trên bản vẽ để chỉnh sửa giá trị, xoay hướng hoặc xóa.
-                </p>
+              <div className="p-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 space-y-3.5 text-center">
+                <div className="w-9 h-9 rounded-xl bg-white border border-slate-200/80 flex items-center justify-center mx-auto shadow-2xs">
+                  <GitBranch className="w-4 h-4 text-blue-600" />
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold text-slate-800">Chưa chọn đối tượng</div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Nhấp vào linh kiện hoặc dây dẫn để sửa thông số, chọn góc xoay 45° / 90° hoặc xóa.
+                  </p>
+                </div>
+                {onSelectTool && (
+                  <div className="flex items-center justify-center gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => onSelectTool('WIRE_ORTHO')}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                    >
+                      Dây vuông <kbd className="ml-1 font-mono text-[10px] text-slate-400">W</kbd>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onSelectTool('WIRE_DIAG')}
+                      className="px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50/70 text-[11px] font-medium text-blue-700 hover:bg-blue-100/70 transition-colors"
+                    >
+                      Dây chéo <kbd className="ml-1 font-mono text-[10px] text-blue-500">D</kbd>
+                    </button>
+                  </div>
+                )}
                 <div className="pt-1 flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-slate-400">
-                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">W: Nối dây</span>
-                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">R: Xoay</span>
+                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">Shift+R: +45°</span>
+                  <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">R: 90°</span>
                   <span className="px-1.5 py-0.5 rounded bg-white border border-slate-200 font-mono">Del: Xóa</span>
                 </div>
               </div>
@@ -1343,10 +1380,20 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         {activeTab === 'RESULTS' && (
           <div className="space-y-4">
             {!simulationResult ? (
-              <div className="text-center py-12 px-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/40">
+              <div className="text-center py-10 px-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 space-y-3">
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Sơ đồ vừa thay đổi. Nhấn <strong className="text-slate-700">Chạy mô phỏng</strong> ở góc trên bên phải để cập nhật điện áp nút, dòng nhánh và công suất.
+                  Sơ đồ vừa thay đổi. Chạy mô phỏng để cập nhật điện áp nút, dòng nhánh và công suất.
                 </p>
+                {onRunSimulationNow && (
+                  <button
+                    type="button"
+                    onClick={onRunSimulationNow}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors shadow-2xs"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Chạy mô phỏng ngay</span>
+                  </button>
+                )}
               </div>
             ) : !simulationResult.success ? (
               <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 space-y-1.5">

@@ -634,7 +634,10 @@ export default function App() {
         setTool('SELECT');
         setPlacingType(null);
       } else if ((e.key === 'w' || e.key === 'W') && !e.ctrlKey && !e.metaKey) {
-        setTool((prev) => (prev === 'WIRE' ? 'SELECT' : 'WIRE'));
+        setTool((prev) => (prev === 'WIRE_ORTHO' ? 'SELECT' : 'WIRE_ORTHO'));
+        setPlacingType(null);
+      } else if ((e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey) {
+        setTool((prev) => (prev === 'WIRE_DIAG' ? 'SELECT' : 'WIRE_DIAG'));
         setPlacingType(null);
       } else if ((e.key === 'r' || e.key === 'R') && selectedElementId && !e.ctrlKey && !e.metaKey) {
         handleRotateElement(selectedElementId, e.shiftKey ? 45 : 90);
@@ -874,17 +877,13 @@ export default function App() {
           <button
             type="button"
             onClick={() => handleRunSimulation()}
-            title="Chạy mô phỏng (Ctrl+Enter)"
-            className="relative inline-flex items-center gap-1.5 ml-1 px-3.5 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 active:scale-[0.99] transition-all shadow-2xs whitespace-nowrap"
+            title={needsRerun ? 'Mạch vừa thay đổi — nhấn Chạy (Ctrl+Enter) để cập nhật' : 'Chạy mô phỏng (Ctrl+Enter)'}
+            className={`relative inline-flex items-center gap-1.5 ml-1 px-3.5 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 active:scale-[0.99] transition-all shadow-2xs whitespace-nowrap ${
+              needsRerun ? 'ring-2 ring-amber-300/90' : ''
+            }`}
           >
             <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Chạy</span>
-            {needsRerun && (
-              <span
-                className="w-2 h-2 rounded-full bg-amber-300 ring-2 ring-blue-600"
-                title="Mạch vừa thay đổi, nhấn để cập nhật kết quả"
-              />
-            )}
+            <span>{needsRerun ? 'Chạy lại' : 'Chạy'}</span>
           </button>
 
           <div className="w-px h-4 bg-slate-200 mx-0.5" />
@@ -982,6 +981,8 @@ export default function App() {
             onRotateElement={handleRotateElement}
             onDeleteElement={handleDeleteElement}
             onDeleteWire={handleDeleteWire}
+            onSelectTool={setTool}
+            onRunSimulationNow={() => handleRunSimulation()}
             onRunTransientNow={() => handleRunSimulation('TRANSIENT')}
             onApplyMaxPowerImpedance={handleApplyMaxPowerImpedance}
           />
@@ -1070,7 +1071,7 @@ export default function App() {
           >
             <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
-                <h2 className="text-sm font-semibold text-slate-900">Làm quen nhanh · MạchĐiệnLab v1.5</h2>
+                <h2 className="text-sm font-semibold text-slate-900">Làm quen nhanh · MạchĐiệnLab v1.6</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Thao tác thiết kế sơ đồ & mô phỏng mạch điện trực quan
                 </p>
@@ -1089,13 +1090,13 @@ export default function App() {
               <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
                 <div className="font-semibold text-blue-700">1. Đặt & Xoay góc</div>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Kéo từ cột trái hoặc click đặt lên lưới. Nhấn <kbd className="px-1 bg-white border rounded font-mono">R</kbd> (90°), <kbd className="px-1 bg-white border rounded font-mono">Shift+R</kbd> (45°) hoặc nhập góc tùy ý.
+                  Kéo từ cột trái hoặc click đặt lên lưới. Nhấn <kbd className="px-1 bg-white border rounded font-mono">R</kbd> (90°), <kbd className="px-1 bg-white border rounded font-mono">Shift+R</kbd> (45°) hoặc chọn góc bất kỳ.
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
-                <div className="font-semibold text-blue-700">2. Nối dây linh hoạt</div>
+                <div className="font-semibold text-blue-700">2. Dây vuông & Dây chéo</div>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Nhấn <kbd className="px-1 bg-white border rounded font-mono">W</kbd> hoặc click chân linh kiện. Giữ <kbd className="px-1 bg-white border rounded font-mono">Shift</kbd> để nối thẳng/chéo 45°.
+                  Dùng <kbd className="px-1 bg-white border rounded font-mono">W</kbd> (dây vuông 90°) hoặc <kbd className="px-1 bg-white border rounded font-mono">D</kbd> (dây chéo / thẳng). Giữ <kbd className="px-1 bg-white border rounded font-mono">Shift</kbd> để đổi kiểu nhanh.
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
@@ -1112,9 +1113,9 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
                 {[
-                  ['V / W', 'Công cụ Chọn / Nối dây'],
-                  ['Space', 'Đảo góc bẻ khi nối dây'],
-                  ['Shift (nối dây)', 'Nối đường thẳng / chéo 45°'],
+                  ['V / W / D', 'Chọn / Dây vuông / Dây chéo'],
+                  ['Space', 'Đảo góc bẻ khi nối dây vuông'],
+                  ['Shift (nối dây)', 'Đảo tạm Dây vuông ↔ Dây chéo'],
                   ['R / Shift + R', 'Xoay phần tử 90° / +45°'],
                   ['F', 'Khớp sơ đồ vào khung nhìn'],
                   ['Del', 'Xóa phần tử hoặc dây đang chọn'],

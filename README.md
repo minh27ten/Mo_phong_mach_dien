@@ -1,9 +1,9 @@
-# MạchĐiệnLab — Phần Mềm Mô Phỏng Mạch Điện & Hệ Thống Điện (`v1.5.0`)
+# MạchĐiệnLab — Phần Mềm Mô Phỏng Mạch Điện & Hệ Thống Điện (`v1.6.0`)
 
 **MạchĐiệnLab** là ứng dụng mô phỏng mạch điện và hệ thống điện **chạy 100% cục bộ trên máy người dùng (Pure Client-Side)** dựa trên bộ giải giải tích nút cải biên **Modified Nodal Analysis (MNA)** — không cần máy chủ, không gửi dữ liệu ra ngoài và không cần API key.
 
 - 🌐 **Dùng thử trực tiếp trên trình duyệt:** https://minh27ten.github.io/Mo_phong_mach_dien/
-- 📦 **Tải bản cài đặt / Portable (`v1.5.0`):** https://github.com/minh27ten/Mo_phong_mach_dien/releases/latest
+- 📦 **Tải bản cài đặt / Portable (`v1.6.0`):** https://github.com/minh27ten/Mo_phong_mach_dien/releases/latest
 - 📖 **Tài liệu hướng dẫn thao tác chi tiết:** Xem [HUONG_DAN_SU_DUNG.md](./HUONG_DAN_SU_DUNG.md).
 
 ---
@@ -14,15 +14,19 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
 
 | Tệp phát hành (GitHub Releases) | Dung lượng | Hệ điều hành | Cách sử dụng |
 | :--- | :---: | :--- | :--- |
-| **`MachDienLab-VI.exe`** | ~1.15 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, hỗ trợ hộp thoại lưu tệp gốc Windows). |
-| **`MachDienLab-VI-Portable.html`** | ~460 KB | Windows / macOS / Linux | Một tệp HTML duy nhất tự chứa toàn bộ ứng dụng — nhấn đúp để mở offline bằng bất kỳ trình duyệt hiện đại nào (Edge, Chrome, Firefox, Safari) qua `file://`. |
+| **`MachDienLab-VI.exe`** | ~1.17 MB | Windows 10 / 11 (x64) | Nhấn đúp chuột để mở trực tiếp như phần mềm Desktop độc lập (tích hợp WebView2 có sẵn trên Windows, biên dịch tĩnh `+crt-static`, hỗ trợ hộp thoại lưu tệp gốc Windows). |
+| **`MachDienLab-VI-Portable.html`** | ~490 KB | Windows / macOS / Linux | Một tệp HTML duy nhất tự chứa toàn bộ ứng dụng — nhấn đúp để mở offline bằng bất kỳ trình duyệt hiện đại nào (Edge, Chrome, Firefox, Safari) qua `file://`. |
 
 *Hoặc chạy trực tiếp bản web tại https://minh27ten.github.io/Mo_phong_mach_dien/.*
 
 ---
 
-## 🆕 Điểm mới ở `v1.5.0` & Lịch sử phát triển
+## 🆕 Điểm mới ở `v1.6.0` & Lịch sử phát triển
 
+- **`v1.6.0` — Nối dây chéo trực quan, Bố cục chống che khuất 3 lớp & UI/UX Tối giản:**
+  - **Công cụ nối dây chéo chuyên biệt (`Dây chéo / D`):** Tách rõ **`Dây vuông (W)`** và **`Dây chéo (D)`** ngay trên thanh công cụ nổi ở đỉnh bản vẽ; hiển thị huy hiệu góc `deg°` trực tiếp cạnh con trỏ (tô xanh khi bám bội `45°`), tự động khởi tạo dây chéo khi xuất phát từ chân phần tử xoay góc chéo từ chế độ *Chọn*, và nâng độ dung sai bắt chữ T lên dây chéo (`tol = 0.75px` trong `netlist.ts` & `SchematicCanvas.tsx`).
+  - **Bố cục chống đè toàn diện 3 lớp (Layer 1 + 2 + 3):** Nâng cấp `computeOverlayLayout` để **Lớp 1 (tên & giá trị linh kiện)** tự đánh giá đa phương án (*Trái/Phải*, *Trên/Dưới*, tách trên-dưới thân ngang, góc chéo) tránh thân phần tử xoay, dây chéo, chấm nối, chấm cực tính hỗ cảm và nhãn lân cận trước khi đặt **Lớp 2 (dòng nhánh)** và **Lớp 3 (điện thế nút)**.
+  - **Tối giản hóa & nâng cao trải nghiệm UI/UX:** Tinh gọn thanh linh kiện bên trái (loại bỏ chân trang dư, tăng không gian hiển thị toàn bộ danh mục), thêm nút thao tác nhanh **Dây vuông / Dây chéo** ở bảng *Thông số* trống, nút **Chạy mô phỏng ngay** ở bảng *Kết quả* trống và viền nhấn **Chạy lại** khi sơ đồ thay đổi.
 - **`v1.5.0` — Chọn góc quay linh kiện 45° / tùy ý & Bố cục nhãn mạch chống đè:**
   - **Xoay linh kiện theo góc 45° & góc bất kỳ `[0, 360)`:** Bổ sung bộ chọn góc nhanh (`−45°`, nhập số độ tùy ý, `+45°`, và lưới góc chuẩn `0° / 45° / 90° / 135° / 180° / 225° / 270° / 315°`) trong bảng *Thông số*, nút `+45°` / `90°` trên pill nổi, phím tắt `Shift+R` (`+45°`), khung chọn xoay theo linh kiện, chữ ký hiệu bên trong nguồn phụ thuộc/`Z`/`Th` luôn đứng thẳng, cùng chế độ **Nối dây Thẳng/Chéo** (giữ `Shift` hoặc chuyển nút kiểu dây) và tự bắt dính vào chân linh kiện xoay chéo off-grid.
   - **Chống đè Nhãn mạch (`overlay`) thông minh:** Động cơ bố cục mới (`labelLayout.ts`) né toàn bộ thân linh kiện (kể cả góc chéo), chân linh kiện, **chấm cực tính hỗ cảm (`•`)**, nhãn tên/giá trị phần tử, dây dẫn và các nhãn khác trên mọi điểm neo của nút (chân, ngã ba, đỉnh/trung điểm dây), tự vẽ đường gióng nét đứt khi nhãn dời ra vùng thoáng.
@@ -95,7 +99,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 | :--- | :--- |
 | `npm run dev` | Chạy máy chủ phát triển Vite tại cổng `3000` |
 | `npm run lint` | Kiểm tra kiểu tĩnh TypeScript (`tsc --noEmit`) |
-| `npm test` | Chạy 45 bài kiểm thử tự động bộ giải MNA, bố cục nhãn & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
+| `npm test` | Chạy 47 bài kiểm thử tự động bộ giải MNA, bố cục nhãn & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
 | `npm run build` | Build bản web tối ưu vào `dist/` |
 | `npm run preview` | Xem trước bản build `dist/` qua Vite Preview |
 | `npm run build:portable` | Đóng gói bản HTML đơn tệp chạy offline (`dist-portable/index.html`) |

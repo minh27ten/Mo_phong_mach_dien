@@ -41,9 +41,9 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 - Nhấp vào phần tử rồi nhấn phím **`R`** (+90°), **`Shift+R`** (+45°), dùng nút **`+45°` / `90°`** trên pill nổi, hoặc mở thẻ **Thông số** bên phải để nhập **góc xoay bất kỳ `[0, 360)`** hay chọn nhanh các góc `0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°` (hữu ích khi vẽ nhánh cầu chéo 45°).
 - Nhấp nút **`?`** ở góc trên bên phải bất cứ lúc nào để mở bảng **Hướng dẫn nhanh & Phím tắt**.
 
-### Vẽ dây dẫn trực giao & thẳng/chéo (Wire Tool)
-1. Nhấn phím **`W`** hoặc chọn biểu tượng **Nối dây** trên thanh công cụ (cũng có thể **nhấp trực tiếp vào một chân linh kiện** ở chế độ *Chọn* để bắt đầu đi dây ngay).
-2. Di chuyển chuột tới điểm gấp khúc hoặc chân đích; dây dẫn tự động bẻ góc vuông `90°`, hoặc giữ phím **`Shift`** (hay bấm nút **Kiểu: Vuông góc / Thẳng-Chéo** trên thanh trạng thái) để đi **đường thẳng / chéo 45°** nối thẳng vào các chân linh kiện xoay chéo off-grid.
+### Vẽ dây dẫn vuông góc (`W`) & dây chéo (`D`)
+1. Chọn trực tiếp trên thanh công cụ nổi ở đỉnh bản vẽ: **`Dây vuông (W)`** để đi dây bẻ góc `90°`, hoặc **`Dây chéo (D)`** để kẻ dây dẫn thẳng / chéo góc bất kỳ (kèm badge hiển thị góc `deg°` theo thời gian thực và snap bội `45°`). Ở chế độ *Chọn (`V`)*, khi nhấp vào chân của phần tử đang xoay góc chéo (`45°`, `135°`...), hệ thống cũng tự động kích hoạt đường đi dây chéo trực tiếp.
+2. Di chuyển chuột tới điểm gấp khúc hoặc chân đích; giữ **`Shift`** khi đang dùng *Dây vuông* cũng chuyển nhanh sang chế độ *Dây chéo*. Hệ thống bố cục nhãn 3 lớp (tên/giá trị linh kiện, dòng nhánh và điện thế nút) tự động tránh thân linh kiện, dây chéo, chấm nối T-junction và nhãn xung quanh để không bị che khuất hay chồng lấn.
 3. Nhấn **`Space`** trong lúc đang vẽ dây vuông góc để đổi chiều gập góc (ngang trước hoặc dọc trước).
 4. Nhấp vào chân linh kiện đích hoặc **nhấp đúp** để kết thúc đoạn dây; nhấn **`Esc`** nếu muốn hủy dây đang vẽ.
 5. **Nhãn mạch chống đè thông minh:** Công tắc **Nhãn mạch** ở góc dưới phải tự động né thân linh kiện, dây dẫn, tên phần tử và chấm cực tính hỗ cảm (`•`), kèm đường gióng nét đứt khi cần dời ra vùng thoáng.
@@ -59,7 +59,8 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 | Phím tắt | Chức năng |
 | :--- | :--- |
 | `V` | Chuyển về công cụ **Chọn / Di chuyển** |
-| `W` | Chuyển sang công cụ **Nối dây** |
+| `W` | Chuyển sang công cụ **Dây vuông (90°)** |
+| `D` | Chuyển sang công cụ **Dây chéo / Thẳng** |
 | `R` / `Shift + R` | Xoay phần tử đang chọn **90°** hoặc **+45° theo chiều kim đồng hồ** |
 | `Shift` *(khi nối dây)* | Chuyển tạm giữa đi dây **Vuông góc** và **Thẳng / Chéo 45°** |
 | `Space` | Đảo hướng bẻ góc dây dẫn khi đang vẽ dây |

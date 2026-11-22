@@ -12,7 +12,7 @@ export interface NetlistGraph {
   diagnostics: DiagnosticMessage[];
 }
 
-function pointOnSegment(p: WirePoint, a: WirePoint, b: WirePoint, tol = 1e-6): boolean {
+function pointOnSegment(p: WirePoint, a: WirePoint, b: WirePoint, tol = 0.75): boolean {
   const minX = Math.min(a.x, b.x) - tol;
   const maxX = Math.max(a.x, b.x) + tol;
   const minY = Math.min(a.y, b.y) - tol;
@@ -22,6 +22,8 @@ function pointOnSegment(p: WirePoint, a: WirePoint, b: WirePoint, tol = 1e-6): b
   const dy = b.y - a.y;
   const len = Math.hypot(dx, dy);
   if (len < tol) return Math.hypot(p.x - a.x, p.y - a.y) <= tol;
+  const dot = ((p.x - a.x) * dx + (p.y - a.y) * dy) / (len * len);
+  if (dot < -tol / len || dot > 1 + tol / len) return false;
   const cross = Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len;
   return cross <= tol;
 }
@@ -275,8 +277,8 @@ export function buildNetlist(elements: CircuitElement[], wires: Wire[]): Netlist
           const a = w.points[s];
           const b = w.points[s + 1];
           const isEnd =
-            (Math.abs(pt.x - a.x) < 1e-6 && Math.abs(pt.y - a.y) < 1e-6) ||
-            (Math.abs(pt.x - b.x) < 1e-6 && Math.abs(pt.y - b.y) < 1e-6);
+            Math.hypot(pt.x - a.x, pt.y - a.y) <= 0.75 ||
+            Math.hypot(pt.x - b.x, pt.y - b.y) <= 0.75;
           if (!isEnd && pointOnSegment(pt, a, b)) {
             addJunction(pt);
           }

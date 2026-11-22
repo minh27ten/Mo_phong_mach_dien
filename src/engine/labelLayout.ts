@@ -22,6 +22,7 @@ export interface Rect {
 }
 
 interface OrientedRect {
+  ownerId: string;
   cx: number;
   cy: number;
   hw: number;
@@ -30,6 +31,7 @@ interface OrientedRect {
 }
 
 interface Segment {
+  ownerId?: string;
   a: WirePoint;
   b: WirePoint;
 }
@@ -128,26 +130,41 @@ function estimateTextRect(
   text: string,
   fontSize: number,
 ): Rect {
-  const w = Math.max(14, text.length * fontSize * 0.61 + 4);
-  const h = fontSize + 3;
+  const w = Math.max(16, text.length * fontSize * 0.64 + 6);
+  const h = fontSize + 5;
   const rx =
     pos.anchor === 'middle'
       ? elX + pos.x - w / 2
       : pos.anchor === 'end'
         ? elX + pos.x - w
         : elX + pos.x;
-  const ry = elY + pos.y - fontSize * 0.85;
+  const ry = elY + pos.y - fontSize * 0.9 - 1.5;
   return { x: rx, y: ry, w, h };
 }
 
-export function getElementTextLayout(
+function makeCandidateLayout(
   el: CircuitElement,
   summaryText: string,
-): ElementTextLayout | null {
-  if (el.type === 'GND') return null;
+  namePos: ElementTextPos,
+  summaryPos: ElementTextPos,
+  prefBias: number,
+): ElementTextLayout & { prefBias: number } {
+  return {
+    name: namePos,
+    summary: summaryPos,
+    boxes: [
+      estimateTextRect(el.x, el.y, namePos, el.name, 11),
+      estimateTextRect(el.x, el.y, summaryPos, summaryText, 9.5),
+    ],
+    prefBias,
+  };
+}
 
-  let namePos: ElementTextPos;
-  let summaryPos: ElementTextPos;
+function getCandidateElementTextLayouts(
+  el: CircuitElement,
+  summaryText: string,
+): Array<ElementTextLayout & { prefBias: number }> {
+  if (el.type === 'GND') return [];
 
   if (el.type.startsWith('THREE_PHASE') || el.type === 'TWO_PORT') {
     const isThreePhase = el.type.startsWith('THREE_PHASE');
@@ -161,44 +178,106 @@ export function getElementTextLayout(
     ];
     const minY = Math.min(...corners.map((c) => c.dy));
     const maxY = Math.max(...corners.map((c) => c.dy));
-    namePos = { x: 0, y: Math.round(minY) - 8, anchor: 'middle' };
-    summaryPos = { x: 0, y: Math.round(maxY) + 14, anchor: 'middle' };
-  } else {
-    const norm = normalizeRotation(el.rotation);
-    const axisDeg =
-      normalizeRotation(isVerticallyOrientedByDefault(el.type) ? norm + 90 : norm) % 180;
-    const isNearHorizontal = axisDeg <= 22.5 || axisDeg >= 157.5;
-    const isNearVertical = axisDeg >= 67.5 && axisDeg <= 112.5;
-
-    if (isNearVertical) {
-      const offsetX = el.type === 'OPAMP' ? -34 : -24;
-      namePos = { x: offsetX, y: -3, anchor: 'end' };
-      summaryPos = { x: offsetX, y: 10, anchor: 'end' };
-    } else if (isNearHorizontal) {
-      const hasTallBody = isVerticallyOrientedByDefault(el.type);
-      const topY = el.type === 'MUTUAL' ? -20 : el.type === 'OPAMP' ? -38 : hasTallBody ? -24 : -22;
-      const botY = el.type === 'OPAMP' ? 40 : hasTallBody ? 28 : 24;
-      namePos = { x: 0, y: topY, anchor: 'middle' };
-      summaryPos = { x: 0, y: botY, anchor: 'middle' };
-    } else if (axisDeg > 90) {
-      // Đường chéo `/` (VD 315° hoặc 135°): đặt nhãn gọn về góc trên-trái
-      namePos = { x: -20, y: -19, anchor: 'end' };
-      summaryPos = { x: -20, y: -6, anchor: 'end' };
-    } else {
-      // Đường chéo `\` (VD 45° hoặc 225°): đặt nhãn gọn về góc trên-phải
-      namePos = { x: 20, y: -19, anchor: 'start' };
-      summaryPos = { x: 20, y: -6, anchor: 'start' };
-    }
+    const topY = Math.round(minY) - 8;
+    const botY = Math.round(maxY) + 14;
+    return [
+      makeCandidateLayout(
+        el,
+        summaryText,
+        { x: 0, y: topY, anchor: 'middle' },
+        { x: 0, y: botY, anchor: 'middle' },
+        0,
+      ),
+      makeCandidateLayout(
+        el,
+        summaryText,
+        { x: 0, y: topY - 13, anchor: 'middle' },
+        { x: 0, y: topY, anchor: 'middle' },
+        10,
+      ),
+      makeCandidateLayout(
+        el,
+        summaryText,
+        { x: 0, y: botY, anchor: 'middle' },
+        { x: 0, y: botY + 13, anchor: 'middle' },
+        10,
+      ),
+    ];
   }
 
-  return {
-    name: namePos,
-    summary: summaryPos,
-    boxes: [
-      estimateTextRect(el.x, el.y, namePos, el.name, 11),
-      estimateTextRect(el.x, el.y, summaryPos, summaryText, 9.5),
-    ],
-  };
+  const norm = normalizeRotation(el.rotation);
+  const axisDeg =
+    normalizeRotation(isVerticallyOrientedByDefault(el.type) ? norm + 90 : norm) % 180;
+  const isNearHorizontal = axisDeg <= 22.5 || axisDeg >= 157.5;
+  const isNearVertical = axisDeg >= 67.5 && axisDeg <= 112.5;
+
+  if (isNearVertical) {
+    const ox = el.type === 'OPAMP' ? 34 : 24;
+    return [
+      makeCandidateLayout(el, summaryText, { x: -ox, y: -3, anchor: 'end' }, { x: -ox, y: 10, anchor: 'end' }, 0),
+      makeCandidateLayout(el, summaryText, { x: ox, y: -3, anchor: 'start' }, { x: ox, y: 10, anchor: 'start' }, 0),
+      makeCandidateLayout(el, summaryText, { x: -ox, y: -18, anchor: 'end' }, { x: -ox, y: -5, anchor: 'end' }, 6),
+      makeCandidateLayout(el, summaryText, { x: ox, y: -18, anchor: 'start' }, { x: ox, y: -5, anchor: 'start' }, 6),
+      makeCandidateLayout(el, summaryText, { x: -ox, y: 9, anchor: 'end' }, { x: -ox, y: 22, anchor: 'end' }, 8),
+      makeCandidateLayout(el, summaryText, { x: ox, y: 9, anchor: 'start' }, { x: ox, y: 22, anchor: 'start' }, 8),
+      makeCandidateLayout(el, summaryText, { x: -(ox + 8), y: -3, anchor: 'end' }, { x: -(ox + 8), y: 10, anchor: 'end' }, 14),
+      makeCandidateLayout(el, summaryText, { x: ox + 8, y: -3, anchor: 'start' }, { x: ox + 8, y: 10, anchor: 'start' }, 14),
+      makeCandidateLayout(el, summaryText, { x: 0, y: -54, anchor: 'middle' }, { x: 0, y: -42, anchor: 'middle' }, 24),
+      makeCandidateLayout(el, summaryText, { x: 0, y: 48, anchor: 'middle' }, { x: 0, y: 61, anchor: 'middle' }, 24),
+    ];
+  }
+
+  if (isNearHorizontal) {
+    const hasTallBody = isVerticallyOrientedByDefault(el.type);
+    const topY = el.type === 'MUTUAL' ? -20 : el.type === 'OPAMP' ? -38 : hasTallBody ? -24 : -22;
+    const botY = el.type === 'OPAMP' ? 40 : hasTallBody ? 28 : 24;
+    return [
+      makeCandidateLayout(el, summaryText, { x: 0, y: topY, anchor: 'middle' }, { x: 0, y: botY, anchor: 'middle' }, 0),
+      makeCandidateLayout(el, summaryText, { x: 0, y: topY - 13, anchor: 'middle' }, { x: 0, y: topY, anchor: 'middle' }, 6),
+      makeCandidateLayout(el, summaryText, { x: 0, y: botY, anchor: 'middle' }, { x: 0, y: botY + 13, anchor: 'middle' }, 6),
+      makeCandidateLayout(el, summaryText, { x: 0, y: botY, anchor: 'middle' }, { x: 0, y: topY, anchor: 'middle' }, 10),
+      makeCandidateLayout(el, summaryText, { x: 0, y: topY - 22, anchor: 'middle' }, { x: 0, y: topY - 9, anchor: 'middle' }, 16),
+      makeCandidateLayout(el, summaryText, { x: 0, y: botY + 9, anchor: 'middle' }, { x: 0, y: botY + 22, anchor: 'middle' }, 16),
+      makeCandidateLayout(el, summaryText, { x: -46, y: -4, anchor: 'end' }, { x: -46, y: 9, anchor: 'end' }, 24),
+      makeCandidateLayout(el, summaryText, { x: 46, y: -4, anchor: 'start' }, { x: 46, y: 9, anchor: 'start' }, 24),
+    ];
+  }
+
+  if (axisDeg > 90) {
+    // Đường chéo `/` (VD 315° hoặc 135°)
+    return [
+      makeCandidateLayout(el, summaryText, { x: -20, y: -19, anchor: 'end' }, { x: -20, y: -6, anchor: 'end' }, 0),
+      makeCandidateLayout(el, summaryText, { x: 20, y: 6, anchor: 'start' }, { x: 20, y: 19, anchor: 'start' }, 2),
+      makeCandidateLayout(el, summaryText, { x: -26, y: -25, anchor: 'end' }, { x: -26, y: -12, anchor: 'end' }, 6),
+      makeCandidateLayout(el, summaryText, { x: 26, y: 12, anchor: 'start' }, { x: 26, y: 25, anchor: 'start' }, 8),
+      makeCandidateLayout(el, summaryText, { x: 0, y: 36, anchor: 'middle' }, { x: 0, y: 49, anchor: 'middle' }, 14),
+      makeCandidateLayout(el, summaryText, { x: 0, y: -41, anchor: 'middle' }, { x: 0, y: -28, anchor: 'middle' }, 14),
+      makeCandidateLayout(el, summaryText, { x: 24, y: -22, anchor: 'start' }, { x: 24, y: -9, anchor: 'start' }, 18),
+      makeCandidateLayout(el, summaryText, { x: -24, y: 6, anchor: 'end' }, { x: -24, y: 19, anchor: 'end' }, 18),
+    ];
+  }
+
+  // Đường chéo `\` (VD 45° hoặc 225°)
+  return [
+    makeCandidateLayout(el, summaryText, { x: 20, y: -19, anchor: 'start' }, { x: 20, y: -6, anchor: 'start' }, 0),
+    makeCandidateLayout(el, summaryText, { x: -20, y: 6, anchor: 'end' }, { x: -20, y: 19, anchor: 'end' }, 2),
+    makeCandidateLayout(el, summaryText, { x: 26, y: -25, anchor: 'start' }, { x: 26, y: -12, anchor: 'start' }, 6),
+    makeCandidateLayout(el, summaryText, { x: -26, y: 12, anchor: 'end' }, { x: -26, y: 25, anchor: 'end' }, 8),
+    makeCandidateLayout(el, summaryText, { x: 0, y: 36, anchor: 'middle' }, { x: 0, y: 49, anchor: 'middle' }, 14),
+    makeCandidateLayout(el, summaryText, { x: 0, y: -41, anchor: 'middle' }, { x: 0, y: -28, anchor: 'middle' }, 14),
+    makeCandidateLayout(el, summaryText, { x: -24, y: -22, anchor: 'end' }, { x: -24, y: -9, anchor: 'end' }, 18),
+    makeCandidateLayout(el, summaryText, { x: 24, y: 6, anchor: 'start' }, { x: 24, y: 19, anchor: 'start' }, 18),
+  ];
+}
+
+export function getElementTextLayout(
+  el: CircuitElement,
+  summaryText: string,
+): ElementTextLayout | null {
+  const candidates = getCandidateElementTextLayouts(el, summaryText);
+  return candidates.length > 0
+    ? { name: candidates[0].name, summary: candidates[0].summary, boxes: candidates[0].boxes }
+    : null;
 }
 
 export function rectsOverlap(a: Rect, b: Rect, padX = 2, padY = 2): boolean {
@@ -243,7 +322,7 @@ function getBodyHalfSize(type: ComponentType): { hw: number; hh: number } {
   }
 }
 
-function rectOverlapsOriented(r: Rect, obb: OrientedRect): boolean {
+function rectOverlapsOriented(r: Rect, obb: { cx: number; cy: number; hw: number; hh: number; angleDeg: number }): boolean {
   const rad = (obb.angleDeg * Math.PI) / 180;
   const c = Math.cos(rad);
   const s = Math.sin(rad);
@@ -255,13 +334,11 @@ function rectOverlapsOriented(r: Rect, obb: OrientedRect): boolean {
   const dx = rcx - obb.cx;
   const dy = rcy - obb.cy;
 
-  // Trục (1, 0) & (0, 1)
   const obbHalfX = obb.hw * Math.abs(c) + obb.hh * Math.abs(s);
   if (Math.abs(dx) >= rx + obbHalfX) return false;
   const obbHalfY = obb.hw * Math.abs(s) + obb.hh * Math.abs(c);
   if (Math.abs(dy) >= ry + obbHalfY) return false;
 
-  // Trục cục bộ (u, v) của OBB
   const du = Math.abs(dx * c + dy * s);
   const rProjU = rx * Math.abs(c) + ry * Math.abs(s);
   if (du >= obb.hw + rProjU) return false;
@@ -336,31 +413,33 @@ export function computeOverlayLayout(params: {
 
   const bodyObstacles: OrientedRect[] = [];
   const dotObstacles: Rect[] = [];
-  const pinObstacles: Rect[] = [];
-  const textObstacles: Rect[] = [];
+  const pinObstacles: Array<{ ownerId: string; rect: Rect }> = [];
+  const staticTagObstacles: Array<{ ownerId: string; rect: Rect }> = [];
   const wireSegments: Segment[] = [];
-  const textLayouts = new Map<string, ElementTextLayout>();
 
   for (const el of elements) {
     const { hw, hh } = getBodyHalfSize(el.type);
-    bodyObstacles.push({ cx: el.x, cy: el.y, hw, hh, angleDeg: normalizeRotation(el.rotation) });
-
-    // Nhãn phần tử + ký hiệu nguồn phụ thuộc (μU, rI, gU, βI)
-    const tl = getElementTextLayout(el, getSummaryText(el));
-    if (tl) {
-      textLayouts.set(el.id, tl);
-      textObstacles.push(...tl.boxes);
-    }
+    bodyObstacles.push({
+      ownerId: el.id,
+      cx: el.x,
+      cy: el.y,
+      hw,
+      hh,
+      angleDeg: normalizeRotation(el.rotation),
+    });
 
     if (el.type === 'VCVS' || el.type === 'CCVS' || el.type === 'VCCS' || el.type === 'CCCS') {
       const rad = ((normalizeRotation(el.rotation) % 360) * Math.PI) / 180;
       const axisVertical = Math.abs(Math.cos(rad)) > 0.75;
       const tagPos = axisVertical ? { x: 26, y: 0 } : { x: 24, y: -15 };
-      textObstacles.push({
-        x: el.x + tagPos.x - 10,
-        y: el.y + tagPos.y - 7,
-        w: 20,
-        h: 14,
+      staticTagObstacles.push({
+        ownerId: el.id,
+        rect: {
+          x: el.x + tagPos.x - 11,
+          y: el.y + tagPos.y - 7,
+          w: 22,
+          h: 14,
+        },
       });
     }
 
@@ -397,7 +476,6 @@ export function computeOverlayLayout(params: {
       }
     }
 
-    // Chấm cực tính hỗ cảm • (bắt buộc không bị nhãn che)
     const dots = inductorDots.get(el.id);
     if (dots && (el.type === 'INDUCTOR' || el.type === 'IMPEDANCE')) {
       const localX = el.type === 'INDUCTOR' ? 22 : 23;
@@ -412,11 +490,11 @@ export function computeOverlayLayout(params: {
       }
     }
 
-    // Chân dẫn nối từ thân phần tử ra WorldPin
     const locals = getLocalPins(el);
     for (const lp of locals) {
       const rp = rotatePoint(lp.dx, lp.dy, el.rotation);
       wireSegments.push({
+        ownerId: el.id,
         a: { x: el.x, y: el.y },
         b: { x: Math.round(el.x + rp.dx), y: Math.round(el.y + rp.dy) },
       });
@@ -424,13 +502,97 @@ export function computeOverlayLayout(params: {
   }
 
   for (const pin of worldPins) {
-    pinObstacles.push({ x: pin.x - 8, y: pin.y - 8, w: 16, h: 16 });
+    pinObstacles.push({
+      ownerId: pin.elementId,
+      rect: { x: pin.x - 8, y: pin.y - 8, w: 16, h: 16 },
+    });
   }
 
   for (const w of wires) {
     for (let i = 0; i < w.points.length - 1; i++) {
       wireSegments.push({ a: w.points[i], b: w.points[i + 1] });
     }
+  }
+
+  // Tâm mạch để ưu tiên đẩy nhãn tên/giá trị ra phía thoáng bên ngoài vòng mạch
+  const mainEls = elements.filter((e) => e.type !== 'GND' && e.type !== 'MUTUAL');
+  const circX =
+    mainEls.length > 0 ? mainEls.reduce((s, e) => s + e.x, 0) / mainEls.length : 0;
+  const circY =
+    mainEls.length > 0 ? mainEls.reduce((s, e) => s + e.y, 0) / mainEls.length : 0;
+
+  // Lớp 1: Đặt nhãn tên & giá trị từng linh kiện tránh thân, chân, dây dẫn và nhãn linh kiện khác
+  const textLayouts = new Map<string, ElementTextLayout>();
+  const textObstacles: Rect[] = staticTagObstacles.map((t) => t.rect);
+
+  const scoreElementTextCand = (
+    el: CircuitElement,
+    cand: ElementTextLayout & { prefBias: number },
+  ): number => {
+    let penalty = cand.prefBias;
+    for (const box of cand.boxes) {
+      for (const obb of bodyObstacles) {
+        const effObb =
+          obb.ownerId === el.id
+            ? { ...obb, hw: Math.max(4, obb.hw - 2), hh: Math.max(4, obb.hh - 2) }
+            : obb;
+        if (rectOverlapsOriented(box, effObb)) penalty += 12000;
+      }
+      for (const dr of dotObstacles) {
+        if (rectsOverlap(box, dr, 3, 3)) penalty += 12000;
+      }
+      for (const po of pinObstacles) {
+        const pad = po.ownerId === el.id ? 0 : 3;
+        if (rectsOverlap(box, po.rect, pad, pad)) penalty += 6000;
+      }
+      for (const to of textObstacles) {
+        if (rectsOverlap(box, to, 4, 3)) penalty += 9000;
+      }
+      for (const seg of wireSegments) {
+        const pad = seg.ownerId === el.id ? 1.5 : 3.5;
+        if (rectIntersectsSegment(box, seg.a, seg.b, pad)) {
+          penalty += seg.ownerId === el.id ? 600 : 1400;
+        }
+      }
+    }
+
+    if (mainEls.length >= 3) {
+      const avgCx = cand.boxes.reduce((s, b) => s + b.x + b.w / 2, 0) / cand.boxes.length;
+      const avgCy = cand.boxes.reduce((s, b) => s + b.y + b.h / 2, 0) / cand.boxes.length;
+      const distEl = Math.hypot(el.x - circX, el.y - circY);
+      const distCand = Math.hypot(avgCx - circX, avgCy - circY);
+      if (distCand > distEl + 4) penalty -= 8;
+    }
+
+    return penalty;
+  };
+
+  // Đặt các phần tử theo chuẩn vuông góc trước (thường nằm ở khung biên), rồi đến phần tử xoay chéo bên trong
+  const orderedForText = [...elements].sort((a, b) => {
+    const da = Math.abs(normalizeRotation(a.rotation) % 90) > 1 ? 1 : 0;
+    const db = Math.abs(normalizeRotation(b.rotation) % 90) > 1 ? 1 : 0;
+    return da - db;
+  });
+
+  for (const el of orderedForText) {
+    const cands = getCandidateElementTextLayouts(el, getSummaryText(el));
+    if (cands.length === 0) continue;
+    let best = cands[0];
+    let bestScore = Infinity;
+    for (const c of cands) {
+      const s = scoreElementTextCand(el, c);
+      if (s < bestScore) {
+        bestScore = s;
+        best = c;
+      }
+    }
+    const chosen: ElementTextLayout = {
+      name: best.name,
+      summary: best.summary,
+      boxes: best.boxes,
+    };
+    textLayouts.set(el.id, chosen);
+    textObstacles.push(...chosen.boxes);
   }
 
   const placedBadges: Rect[] = [];
@@ -443,14 +605,14 @@ export function computeOverlayLayout(params: {
     for (const dr of dotObstacles) {
       if (rectsOverlap(rect, dr, 3, 3)) penalty += 10000;
     }
-    for (const pr of pinObstacles) {
-      if (rectsOverlap(rect, pr, 2, 2)) penalty += 5000;
+    for (const po of pinObstacles) {
+      if (rectsOverlap(rect, po.rect, 2, 2)) penalty += 5000;
     }
     for (const pb of placedBadges) {
       if (rectsOverlap(rect, pb, 5, 4)) penalty += 5000;
     }
     for (const tr of textObstacles) {
-      if (rectsOverlap(rect, tr, 3, 2)) penalty += 4000;
+      if (rectsOverlap(rect, tr, 4, 5)) penalty += 4500;
     }
     for (const seg of wireSegments) {
       if (rectIntersectsSegment(rect, seg.a, seg.b, 3)) penalty += 900;
@@ -461,7 +623,7 @@ export function computeOverlayLayout(params: {
     return penalty + dist * 0.75 + extraDistBias;
   };
 
-  // 1. Đặt nhãn dòng điện nhánh I=... trước (mỗi nhánh gắn với 1 linh kiện cố định)
+  // Lớp 2: Đặt nhãn dòng điện nhánh I=...
   const branchCurrentPositions = new Map<string, BranchCurrentBadgeLayout>();
   if (simulationResult?.success) {
     for (const el of elements) {
@@ -482,52 +644,63 @@ export function computeOverlayLayout(params: {
       const isTwoPort = el.type === 'TWO_PORT';
       const norm = normalizeRotation(el.rotation);
       const axisDeg = normalizeRotation(isVerticallyOrientedByDefault(el.type) ? norm + 90 : norm) % 180;
-      const isDiagonal = !isThreePhase && !isTwoPort && axisDeg > 22.5 && axisDeg < 157.5 && !(axisDeg >= 67.5 && axisDeg <= 112.5);
+      const isDiagonal =
+        !isThreePhase &&
+        !isTwoPort &&
+        axisDeg > 22.5 &&
+        axisDeg < 157.5 &&
+        !(axisDeg >= 67.5 && axisDeg <= 112.5);
 
       const candidates: Array<{ rx: number; ry: number; bias: number }> = [];
       if (isDiagonal) {
-        // Ưu tiên góc đối diện nhãn phần tử
-        if (axisDeg > 90) {
-          candidates.push(
-            { rx: 14, ry: 12, bias: 0 },
-            { rx: 16, ry: -boxH / 2, bias: 6 },
-            { rx: -boxW / 2, ry: 34, bias: 10 },
-            { rx: -boxW - 14, ry: 14, bias: 14 },
-            { rx: -boxW / 2, ry: -44 - boxH, bias: 18 },
-          );
-        } else {
-          candidates.push(
-            { rx: -boxW - 14, ry: 12, bias: 0 },
-            { rx: -boxW - 16, ry: -boxH / 2, bias: 6 },
-            { rx: -boxW / 2, ry: 34, bias: 10 },
-            { rx: 14, ry: 14, bias: 14 },
-            { rx: -boxW / 2, ry: -44 - boxH, bias: 18 },
-          );
-        }
+        candidates.push(
+          { rx: 14, ry: 12, bias: 0 },
+          { rx: -boxW - 14, ry: 12, bias: 2 },
+          { rx: 16, ry: -boxH / 2, bias: 6 },
+          { rx: -boxW - 16, ry: -boxH / 2, bias: 6 },
+          { rx: -boxW / 2, ry: 34, bias: 10 },
+          { rx: -boxW / 2, ry: -44 - boxH, bias: 12 },
+          { rx: 14, ry: -26 - boxH, bias: 14 },
+          { rx: -boxW - 14, ry: -26 - boxH, bias: 14 },
+        );
       } else if (isVerticalPins && !isThreePhase && !isTwoPort) {
         candidates.push(
           { rx: 25, ry: -boxH / 2, bias: 0 },
-          { rx: 26, ry: 16, bias: 6 },
-          { rx: 26, ry: -16 - boxH, bias: 8 },
-          { rx: -25 - boxW, ry: 18, bias: 12 },
-          { rx: -25 - boxW, ry: -20 - boxH, bias: 14 },
-          { rx: 38, ry: -boxH / 2, bias: 18 },
+          { rx: -25 - boxW, ry: -boxH / 2, bias: 2 },
+          { rx: 25, ry: 0, bias: 4 },
+          { rx: -25 - boxW, ry: 0, bias: 5 },
+          { rx: 25, ry: -boxH, bias: 4 },
+          { rx: -25 - boxW, ry: -boxH, bias: 5 },
+          { rx: 26, ry: 18, bias: 7 },
+          { rx: -26 - boxW, ry: 18, bias: 7 },
+          { rx: 26, ry: -18 - boxH, bias: 9 },
+          { rx: -26 - boxW, ry: -18 - boxH, bias: 9 },
+          { rx: 26, ry: 24, bias: 12 },
+          { rx: -26 - boxW, ry: 24, bias: 12 },
+          { rx: 26, ry: -24 - boxH, bias: 12 },
+          { rx: -26 - boxW, ry: -24 - boxH, bias: 12 },
+          { rx: 26, ry: -38 - boxH, bias: 14 },
+          { rx: -26 - boxW, ry: -38 - boxH, bias: 14 },
+          { rx: 26, ry: 38, bias: 14 },
+          { rx: -26 - boxW, ry: 38, bias: 14 },
+          { rx: 38, ry: -boxH / 2, bias: 16 },
+          { rx: -38 - boxW, ry: -boxH / 2, bias: 16 },
           { rx: -boxW / 2, ry: 48, bias: 24 },
           { rx: -boxW / 2, ry: -48 - boxH, bias: 26 },
         );
       } else {
         const hasTallBody = isVerticallyOrientedByDefault(el.type);
-        const belowY = isThreePhase ? 92 : isTwoPort ? 68 : el.type === 'OPAMP' ? 48 : hasTallBody ? 35 : 31;
-        const aboveY = isThreePhase ? -104 - boxH : isTwoPort ? -76 - boxH : el.type === 'OPAMP' ? -52 - boxH : hasTallBody ? -40 - boxH : -38 - boxH;
+        const belowY = isThreePhase ? 92 : isTwoPort ? 68 : el.type === 'OPAMP' ? 48 : hasTallBody ? 37 : 34;
+        const aboveY = isThreePhase ? -104 - boxH : isTwoPort ? -76 - boxH : el.type === 'OPAMP' ? -52 - boxH : hasTallBody ? -41 - boxH : -40 - boxH;
         candidates.push(
           { rx: -boxW / 2, ry: belowY, bias: 0 },
-          { rx: -boxW / 2, ry: aboveY, bias: 6 },
-          { rx: -boxW / 2, ry: belowY + 18, bias: 12 },
-          { rx: -boxW / 2, ry: aboveY - 18, bias: 14 },
-          { rx: 46, ry: -boxH / 2, bias: 16 },
-          { rx: -46 - boxW, ry: -boxH / 2, bias: 18 },
-          { rx: 22, ry: belowY, bias: 20 },
-          { rx: -22 - boxW, ry: belowY, bias: 20 },
+          { rx: -boxW / 2, ry: aboveY, bias: 4 },
+          { rx: -boxW / 2, ry: belowY + 18, bias: 10 },
+          { rx: -boxW / 2, ry: aboveY - 18, bias: 10 },
+          { rx: 46, ry: -boxH / 2, bias: 14 },
+          { rx: -46 - boxW, ry: -boxH / 2, bias: 14 },
+          { rx: 22, ry: belowY, bias: 18 },
+          { rx: -22 - boxW, ry: belowY, bias: 18 },
         );
       }
 
@@ -562,7 +735,7 @@ export function computeOverlayLayout(params: {
     }
   }
 
-  // 2. Gom toàn bộ điểm neo (chân linh kiện + đỉnh/trung điểm dây + ngã ba) của từng nút (nodeId !== '0')
+  // Lớp 3: Đặt nhãn nút (N...) & điện áp nút
   const anchorsByNode = new Map<string, Array<WirePoint & { kindBias: number }>>();
   const addAnchor = (nid: string | undefined, pt: WirePoint, kindBias: number) => {
     if (!nid || nid === '0') return;

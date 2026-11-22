@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   AlertTriangle,
-  Cable,
   Eye,
   EyeOff,
   Info,
@@ -40,7 +39,7 @@ import { buildNetlist, NetlistGraph } from '../engine/netlist';
 import { ComponentSymbol, getElementSummaryText } from './ComponentSymbol';
 import { DraftNumInput } from './DraftNumInput';
 
-export type EditorTool = 'SELECT' | 'WIRE';
+export type EditorTool = 'SELECT' | 'WIRE_ORTHO' | 'WIRE_DIAG';
 
 interface SchematicCanvasProps {
   elements: CircuitElement[];
@@ -114,7 +113,7 @@ function simplifyPolyline(pts: WirePoint[]): WirePoint[] {
   return out;
 }
 
-function pointTouchesWire(pt: WirePoint, wires: Wire[], tol = 1.5): boolean {
+function pointTouchesWire(pt: WirePoint, wires: Wire[], tol = 0.75): boolean {
   return wires.some((w) =>
     w.points.some((a, idx) => {
       if (idx === w.points.length - 1) return false;
@@ -170,7 +169,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
   const [cursorWorld, setCursorWorld] = useState<WirePoint>({ x: 0, y: 0 });
   const [wireDraft, setWireDraft] = useState<WirePoint[] | null>(null);
-  const [wireRouting, setWireRouting] = useState<'ORTHO' | 'DIRECT'>('ORTHO');
+  const [draftDirectOverride, setDraftDirectOverride] = useState<boolean | null>(null);
   const [shiftHeld, setShiftHeld] = useState(false);
   const [horizontalFirst, setHorizontalFirst] = useState(true);
   const [manualBendLock, setManualBendLock] = useState(false);
@@ -239,6 +238,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     [pan, zoom],
   );
 
+  const isWireTool = tool === 'WIRE_ORTHO' || tool === 'WIRE_DIAG';
+
   // Bắt điểm ưu tiên chân linh kiện xoay góc (off-grid), rồi đến dây dẫn và lưới 20px
   const resolveWireTarget = useCallback(
     (clientX: number, clientY: number): WirePoint => {
@@ -255,8 +256,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       if (bestPin) return { x: bestPin.x, y: bestPin.y };
 
       const gridPt = { x: snapToGrid(raw.x), y: snapToGrid(raw.y) };
-      if (wireDraft || tool === 'WIRE') {
-        if (pointTouchesWire(gridPt, wires, 1.5) && Math.hypot(raw.x - gridPt.x, raw.y - gridPt.y) <= 12) {
+      if (wireDraft || isWireTool) {
+        if (pointTouchesWire(gridPt, wires, 0.75) && Math.hypot(raw.x - gridPt.x, raw.y - gridPt.y) <= 12) {
           return gridPt;
         }
         let bestVertex: WirePoint | null = null;
@@ -294,10 +295,11 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
       return gridPt;
     },
-    [clientToWorld, worldPins, wireDraft, tool, wires],
+    [clientToWorld, worldPins, wireDraft, isWireTool, wires],
   );
 
-  const useDirectWire = (wireRouting === 'DIRECT') !== shiftHeld;
+  const baseDirectWire = draftDirectOverride ?? (tool === 'WIRE_DIAG');
+  const useDirectWire = baseDirectWire !== shiftHeld;
 
   const handleFitView = useCallback(() => {
     const rect = svgRef.current?.getBoundingClientRect();
@@ -358,6 +360,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
       if (e.key === 'Escape' && wireDraft) {
         setWireDraft(null);
+        setDraftDirectOverride(null);
         setManualBendLock(false);
       } else if (e.code === 'Space' && wireDraft) {
         e.preventDefault();
@@ -392,18 +395,21 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       onAddWire(full);
     }
     setWireDraft(null);
+    setDraftDirectOverride(null);
     setManualBendLock(false);
   };
 
-  const handlePinClick = (e: React.MouseEvent, pinPt: WirePoint) => {
+  const handlePinClick = (e: React.MouseEvent, pinPt: WirePoint, elRotation = 0) => {
     e.stopPropagation();
     if (placingType) return;
     if (!wireDraft) {
+      const isAngled = Math.abs(normalizeRotation(elRotation) % 90) > 0.5;
+      setDraftDirectOverride(tool === 'SELECT' && isAngled ? true : null);
       setWireDraft([pinPt]);
       setHorizontalFirst(true);
       setManualBendLock(false);
     } else {
-      const direct = (wireRouting === 'DIRECT') !== e.shiftKey;
+      const direct = baseDirectWire !== e.shiftKey;
       finishWireAt(pinPt, direct);
     }
   };
@@ -412,6 +418,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     if (e.button === 2) {
       if (wireDraft) {
         setWireDraft(null);
+        setDraftDirectOverride(null);
         setManualBendLock(false);
       } else if (placingType) {
         onCancelPlace();
@@ -429,7 +436,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
     if (wireDraft) {
       const last = wireDraft[wireDraft.length - 1];
-      const direct = (wireRouting === 'DIRECT') !== e.shiftKey;
+      const direct = baseDirectWire !== e.shiftKey;
       const seg = buildWirePath(last, pt, horizontalFirst, direct);
       const nextPts = simplifyPolyline([...wireDraft, ...seg.slice(1)]);
       const hitPin = worldPins.some((p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= 1.5);
@@ -437,6 +444,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       if (hitPin || hitWire) {
         if (nextPts.length >= 2) onAddWire(nextPts);
         setWireDraft(null);
+        setDraftDirectOverride(null);
         setManualBendLock(false);
       } else {
         setWireDraft(nextPts);
@@ -445,7 +453,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       return;
     }
 
-    if (tool === 'WIRE') {
+    if (isWireTool) {
+      setDraftDirectOverride(null);
       setWireDraft([pt]);
       setManualBendLock(false);
       return;
@@ -463,7 +472,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   };
 
   const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const pt = tool === 'WIRE' || wireDraft ? resolveWireTarget(e.clientX, e.clientY) : clientToWorld(e.clientX, e.clientY, true);
+    const pt = isWireTool || wireDraft ? resolveWireTarget(e.clientX, e.clientY) : clientToWorld(e.clientX, e.clientY, true);
     setCursorWorld(pt);
 
     if (wireDraft && wireDraft.length > 0 && !manualBendLock) {
@@ -565,14 +574,30 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   }, [wireDraft, cursorWorld, horizontalFirst, useDirectWire]);
 
   const cursorSnapTarget = useMemo(() => {
-    if (!wireDraft && tool !== 'WIRE') return null;
+    if (!wireDraft && !isWireTool) return null;
     const pin = worldPins.find((p) => Math.hypot(p.x - cursorWorld.x, p.y - cursorWorld.y) <= 1.5);
     if (pin) return { kind: 'PIN' as const, x: pin.x, y: pin.y, label: pin.label };
     if (wireDraft && pointTouchesWire(cursorWorld, wires)) {
       return { kind: 'WIRE' as const, x: cursorWorld.x, y: cursorWorld.y, label: 'Nối T' };
     }
     return null;
-  }, [wireDraft, tool, worldPins, wires, cursorWorld]);
+  }, [wireDraft, isWireTool, worldPins, wires, cursorWorld]);
+
+  const activeDiagGuide = useMemo(() => {
+    if (!wireDraft || wireDraft.length === 0 || !useDirectWire) return null;
+    const last = wireDraft[wireDraft.length - 1];
+    const dx = cursorWorld.x - last.x;
+    const dy = cursorWorld.y - last.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 10) return null;
+    const deg = ((Math.round((Math.atan2(dy, dx) * 180) / Math.PI) % 360) + 360) % 360;
+    return {
+      x: (last.x + cursorWorld.x) / 2,
+      y: (last.y + cursorWorld.y) / 2 - 14,
+      label: `${deg}°`,
+      isCardinalOr45: deg % 45 === 0,
+    };
+  }, [wireDraft, cursorWorld, useDirectWire]);
 
   const selectedElement = useMemo(
     () => (selectedElementId ? elements.find((e) => e.id === selectedElementId) ?? null : null),
@@ -605,7 +630,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         ref={svgRef}
         data-testid="schematic-canvas"
         className={`w-full h-full block ${
-          placingType || tool === 'WIRE' || wireDraft
+          placingType || isWireTool || wireDraft
             ? 'cursor-crosshair'
             : 'cursor-grab active:cursor-grabbing'
         }`}
@@ -616,7 +641,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           if (!wireDraft || wireDraft.length === 0) return;
           e.stopPropagation();
           const pt = resolveWireTarget(e.clientX, e.clientY);
-          finishWireAt(pt, (wireRouting === 'DIRECT') !== e.shiftKey);
+          finishWireAt(pt, baseDirectWire !== e.shiftKey);
         }}
       >
         <defs>
@@ -719,16 +744,42 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
           {/* Xem trước dây đang vẽ */}
           {previewWirePoints && previewWirePoints.length >= 2 && (
-            <polyline
-              points={previewWirePoints.map((p) => `${p.x},${p.y}`).join(' ')}
-              fill="none"
-              stroke="#2563EB"
-              strokeWidth={2}
-              strokeDasharray="5 3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              pointerEvents="none"
-            />
+            <>
+              <polyline
+                points={previewWirePoints.map((p) => `${p.x},${p.y}`).join(' ')}
+                fill="none"
+                stroke="#2563EB"
+                strokeWidth={2}
+                strokeDasharray="5 3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                pointerEvents="none"
+              />
+              {activeDiagGuide && (
+                <g transform={`translate(${activeDiagGuide.x}, ${activeDiagGuide.y})`} pointerEvents="none">
+                  <rect
+                    x={-17}
+                    y={-9}
+                    width={34}
+                    height={16}
+                    rx={4}
+                    fill={activeDiagGuide.isCardinalOr45 ? '#1D4ED8' : '#0F172A'}
+                    fillOpacity={0.92}
+                  />
+                  <text
+                    x={0}
+                    y={2}
+                    textAnchor="middle"
+                    fontSize={9}
+                    fontWeight={600}
+                    fill="#FFFFFF"
+                    className="font-mono tabular-nums"
+                  >
+                    {activeDiagGuide.label}
+                  </text>
+                </g>
+              )}
+            </>
           )}
 
           {/* Vòng bắt điểm trên dây / chân khi nối dây */}
@@ -883,7 +934,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                     <g
                       key={pin.key}
                       transform={`translate(${rx}, ${ry})`}
-                      onMouseDown={(e) => handlePinClick(e, { x: pin.x, y: pin.y })}
+                      onMouseDown={(e) => handlePinClick(e, { x: pin.x, y: pin.y }, el.rotation)}
                       onMouseEnter={() => setHoveredPinKey(pin.key)}
                       onMouseLeave={() =>
                         setHoveredPinKey((prev) => (prev === pin.key ? null : prev))
@@ -1098,18 +1149,44 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
             <button
               type="button"
               onClick={() => {
-                onSelectTool('WIRE');
+                setDraftDirectOverride(null);
+                onSelectTool('WIRE_ORTHO');
                 onCancelPlace();
               }}
-              title="Vẽ dây dẫn trực giao (W)"
+              title="Nối dây vuông góc 90° (W)"
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
-                tool === 'WIRE'
+                tool === 'WIRE_ORTHO'
                   ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200/80'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
               }`}
             >
-              <Cable className="w-3.5 h-3.5" />
-              <span>Nối dây</span>
+              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3.5 12.5V4.5H12.5" />
+                <circle cx="3.5" cy="12.5" r="1.4" fill="currentColor" stroke="none" />
+                <circle cx="12.5" cy="4.5" r="1.4" fill="currentColor" stroke="none" />
+              </svg>
+              <span>Dây vuông</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDraftDirectOverride(null);
+                onSelectTool('WIRE_DIAG');
+                onCancelPlace();
+              }}
+              title="Nối dây thẳng / chéo góc bất kỳ (D)"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+                tool === 'WIRE_DIAG'
+                  ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200/80'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
+              }`}
+            >
+              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round">
+                <line x1="3.5" y1="12.5" x2="12.5" y2="3.5" />
+                <circle cx="3.5" cy="12.5" r="1.4" fill="currentColor" stroke="none" />
+                <circle cx="12.5" cy="3.5" r="1.4" fill="currentColor" stroke="none" />
+              </svg>
+              <span>Dây chéo</span>
             </button>
 
             <div className="w-px h-4 bg-slate-200 mx-0.5" />
@@ -1117,9 +1194,19 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
             <button
               type="button"
               disabled={!selectedElementId || !onRotateElement}
+              onClick={() => selectedElementId && onRotateElement?.(selectedElementId, 45)}
+              aria-label="Xoay phần tử 45 độ"
+              title="Xoay +45° (Shift+R)"
+              className="px-1.5 py-1 rounded-lg text-[11px] font-mono font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
+            >
+              +45°
+            </button>
+            <button
+              type="button"
+              disabled={!selectedElementId || !onRotateElement}
               onClick={() => selectedElementId && onRotateElement?.(selectedElementId, 90)}
-              aria-label="Xoay phần tử đang chọn"
-              title="Xoay 90° (R) · Shift+R: +45°"
+              aria-label="Xoay phần tử 90 độ"
+              title="Xoay 90° (R)"
               className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
             >
               <RotateCw className="w-3.5 h-3.5" />
@@ -1194,10 +1281,10 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           )}
         </div>
 
-        {(placingType || wireDraft || tool === 'WIRE') && (
+        {(placingType || wireDraft || isWireTool) && (
           <div
             onMouseDown={(e) => e.stopPropagation()}
-            className={`bg-slate-900/95 backdrop-blur-md text-white text-xs px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-2.5 ${
+            className={`bg-slate-900/90 backdrop-blur-md text-white text-[11px] px-3 py-1 rounded-full shadow-md flex items-center gap-2 ${
               placingType ? 'pointer-events-none' : 'pointer-events-auto'
             }`}
           >
@@ -1206,30 +1293,20 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
               {placingType
                 ? 'Nhấp vào lưới để đặt phần tử · Chuột phải hoặc Esc để hủy'
                 : wireDraft
-                  ? 'Nhấp chân đích, nhấp đúp hoặc chạm dây · Space đổi góc · Giữ Shift: thẳng/chéo · Esc hủy'
-                  : 'Chế độ nối dây: Nhấp chân linh kiện hoặc lưới để bắt đầu · Esc thoát'}
+                  ? useDirectWire
+                    ? 'Đang nối thẳng / chéo: Nhấp chân đích hoặc nhấp đúp · Giữ Shift: bẻ góc 90° · Esc hủy'
+                    : 'Đang nối vuông 90°: Nhấp chân đích hoặc nhấp đúp · Space đổi góc · Giữ Shift: dây chéo · Esc hủy'
+                  : tool === 'WIRE_DIAG'
+                    ? 'Dây chéo: Nhấp điểm đầu hoặc chân linh kiện · Giữ Shift để nối vuông 90°'
+                    : 'Dây vuông 90°: Nhấp điểm đầu hoặc chân linh kiện · Giữ Shift để nối chéo'}
             </span>
-            {!placingType && (
-              <button
-                type="button"
-                onClick={() => setWireRouting((r) => (r === 'ORTHO' ? 'DIRECT' : 'ORTHO'))}
-                title="Chuyển kiểu nối dây Vuông góc (90°) / Thẳng-Chéo (hoặc giữ Shift)"
-                className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${
-                  useDirectWire
-                    ? 'bg-blue-500/30 border-blue-400 text-blue-200 hover:bg-blue-500/45'
-                    : 'bg-slate-800 border-slate-600 text-slate-200 hover:bg-slate-700'
-                }`}
-              >
-                {useDirectWire ? 'Kiểu: Thẳng/Chéo' : 'Kiểu: Vuông góc'}
-              </button>
-            )}
           </div>
         )}
       </div>
 
       {/* Bảng chẩn đoán mạch điện (góc dưới trái) */}
       {activeDiagnostics.length > 0 && (
-        <div className="absolute bottom-3 left-3 max-w-[calc(100%-220px)] sm:max-w-md space-y-1.5 z-10">
+        <div className="absolute bottom-3 left-3 max-w-[calc(100%-290px)] sm:max-w-md space-y-1.5 z-10">
           {activeDiagnostics.slice(0, 3).map((d, i) => {
             const styles =
               d.level === 'error'
