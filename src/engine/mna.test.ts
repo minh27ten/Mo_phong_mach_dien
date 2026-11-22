@@ -8,7 +8,17 @@ import {
   getSourceHarmonicSummary,
   runSimulation,
 } from './mna';
-import { createDefaultElement, isValidComponentType } from './pins';
+import {
+  createDefaultElement,
+  getElementWorldPins,
+  getMutualDotPins,
+  isValidComponentType,
+  normalizeRotation,
+  rotatePoint,
+} from './pins';
+import { buildNetlist } from './netlist';
+import { computeOverlayLayout, rectsOverlap } from './labelLayout';
+import { getElementSummaryText } from '../components/ComponentSymbol';
 import { CIRCUIT_PRESETS } from '../data/presets';
 import { CircuitState } from '../types/circuit';
 
@@ -1088,5 +1098,128 @@ test('Hỗ cảm tổng trở (MUTUAL Z_OHM): cảnh báo k > 1 & tương thích
   if (!mp.success) throw new Error(`findMaxPowerImpedance thất bại: ${mp.error}`);
   approx(mp.pSimulated, mp.pMax, 1e-4, 'P_sim MNA khớp P_max trên mạch có hỗ cảm Z_M');
 });
+
+test('Xoay góc 45° / góc tùy ý, dây nối chéo & mô phỏng cầu tổng trở chéo', () => {
+  assert.equal(normalizeRotation(-45), 315);
+  assert.equal(normalizeRotation(405), 45);
+  assert.equal(normalizeRotation(360), 0);
+
+  const r45 = rotatePoint(40, 0, 45);
+  approx(r45.dx, Math.SQRT1_2 * 40, 1e-6);
+  approx(r45.dy, Math.SQRT1_2 * 40, 1e-6);
+
+  const diagBridge: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 300, y: 180, rotation: 0, waveform: 'AC', acValue: 100, amplitudeType: 'RMS', phaseDeg: 0, freqHz: 50 },
+      { id: 'r1', name: 'R1', type: 'RESISTOR', x: 200, y: 120, rotation: 45, resistance: 30 },
+      { id: 'z2', name: 'ZL2', type: 'IMPEDANCE', x: 200, y: 200, rotation: 315, impedance: { re: 0, im: 40 } },
+      { id: 'gnd1', name: 'GND', type: 'GND', x: 300, y: 260, rotation: 0 },
+    ],
+    wires: [],
+  };
+
+  const r1Pins = getElementWorldPins(diagBridge.elements[1]);
+  const z2Pins = getElementWorldPins(diagBridge.elements[2]);
+  // Nối E1+ (300, 140) -> R1 pin1 -> R1 pin2 -> ZL2 pin2 -> ZL2 pin1 -> GND (300, 240 / 220)
+  diagBridge.wires.push(
+    { id: 'w1', points: [{ x: 300, y: 140 }, { x: r1Pins[0].x, y: r1Pins[0].y }] },
+    { id: 'w2', points: [{ x: r1Pins[1].x, y: r1Pins[1].y }, { x: z2Pins[1].x, y: z2Pins[1].y }] },
+    { id: 'w3', points: [{ x: z2Pins[0].x, y: z2Pins[0].y }, { x: 300, y: 220 }] },
+    { id: 'w4', points: [{ x: 300, y: 220 }, { x: 300, y: 240 }] },
+  );
+
+  const net = buildNetlist(diagBridge.elements, diagBridge.wires);
+  assert.equal(net.nodeMap['r1:1'], net.nodeMap['e1:p'], 'Dây nối chéo nối đúng chân xoay 45°');
+  assert.equal(net.nodeMap['r1:2'], net.nodeMap['z2:2'], 'Hai linh kiện xoay 45° & 315° nối thông mạch');
+  assert.equal(net.nodeMap['z2:1'], '0', 'Chân xoay 315° nối đúng về GND');
+
+  const sim = runSimulation(diagBridge, 'AC');
+  assert.equal(sim.success, true);
+  // Tổng trở |30 + j40| = 50 Ohm -> I = 100 / 50 = 2 A
+  approx(sim.elements.find((e) => e.elementId === 'r1')!.currentRms, 2, 1e-4, 'Dòng qua R1 xoay 45°');
+  approx(sim.elements.find((e) => e.elementId === 'z2')!.currentRms, 2, 1e-4, 'Dòng qua ZL2 xoay 315°');
+});
+
+test('Bố cục chống đè nhãn mạch (overlay) tránh phần tử, nhãn tên & chấm cực tính hỗ cảm', () => {
+  const state: CircuitState = {
+    elements: [
+      { id: 'e1', name: 'E1', type: 'V_SRC', x: 240, y: 260, rotation: 90, waveform: 'AC', acValue: 10, phaseDeg: 10, freqHz: 50 },
+      { id: 'z1', name: 'Z1', type: 'IMPEDANCE', x: 100, y: 200, rotation: 90, impedance: { re: 0, im: 1 } },
+      { id: 'ev1', name: 'Ev1', type: 'VCVS', x: 180, y: 140, rotation: 270, gain: 0.3 },
+      { id: 'z2', name: 'Z2', type: 'IMPEDANCE', x: 300, y: 140, rotation: 90, impedance: { re: 0, im: 2 } },
+      { id: 'z3', name: 'Z3', type: 'IMPEDANCE', x: 100, y: 80, rotation: 90, impedance: { re: 3, im: -3 } },
+      { id: 'zm', name: 'M1', type: 'MUTUAL', x: 240, y: 20, rotation: 0, l1Id: 'z1', l2Id: 'z2', l1DotPin: 2, l2DotPin: 1, dotPolarity: 1, mutualValueMode: 'Z_OHM', mutualZ: { re: 0, im: 0.5 } },
+      { id: 'g', name: 'GND', type: 'GND', x: 100, y: 280, rotation: 0 },
+    ],
+    wires: [
+      { id: 'w1', points: [{ x: 100, y: 120 }, { x: 100, y: 160 }] },
+      { id: 'w2', points: [{ x: 100, y: 140 }, { x: 140, y: 140 }] },
+      { id: 'w3', points: [{ x: 220, y: 140 }, { x: 260, y: 140 }] },
+      { id: 'w4', points: [{ x: 340, y: 140 }, { x: 340, y: 260 }, { x: 280, y: 260 }] },
+      { id: 'w5', points: [{ x: 200, y: 260 }, { x: 100, y: 260 }, { x: 100, y: 240 }] },
+    ],
+  };
+
+  // Fix Z2 to horizontal (rotation: 0) as in user screenshot (center 300,140 -> pins 260,140 & 340,140)
+  state.elements[3].rotation = 0;
+
+  const net = buildNetlist(state.elements, state.wires);
+  const sim = runSimulation(state, 'AC');
+  assert.equal(sim.success, true);
+
+  const worldPins = state.elements.flatMap((el) => getElementWorldPins(el));
+  const dotMap = new Map<string, { pin1: boolean; pin2: boolean }>();
+  const dp = getMutualDotPins(state.elements[5]);
+  dotMap.set('z1', { pin1: dp.pin1 === 1, pin2: dp.pin1 === 2 });
+  dotMap.set('z2', { pin1: dp.pin2 === 1, pin2: dp.pin2 === 2 });
+
+  const layout = computeOverlayLayout({
+    elements: state.elements,
+    wires: state.wires,
+    worldPins,
+    netlist: net,
+    simulationResult: sim,
+    inductorDots: dotMap,
+    getSummaryText: (el) => getElementSummaryText(el, state.elements),
+  });
+
+  // Kiểm tra tất cả nhãn nút & nhãn dòng không chồng lấn nhau và không đè lên nhãn tên phần tử hay chấm cực tính •
+  const allBadges = [
+    ...layout.nodeBadges.map((b) => ({ x: b.bx, y: b.by, w: b.boxW, h: b.boxH, label: b.vText })),
+    ...Array.from(layout.branchCurrentPositions.entries()).map(([id, b]) => {
+      const el = state.elements.find((e) => e.id === id)!;
+      return { x: el.x + b.relX, y: el.y + b.relY, w: b.boxW, h: b.boxH, label: `${el.name}:${b.text}` };
+    }),
+  ];
+
+  for (let i = 0; i < allBadges.length; i++) {
+    for (let j = i + 1; j < allBadges.length; j++) {
+      assert.equal(
+        rectsOverlap(allBadges[i], allBadges[j], 0, 0),
+        false,
+        `Badge ${allBadges[i].label} overlaps ${allBadges[j].label}`,
+      );
+    }
+    for (const tl of layout.textLayouts.values()) {
+      for (const tb of tl.boxes) {
+        assert.equal(
+          rectsOverlap(allBadges[i], tb, 0, 0),
+          false,
+          `Badge ${allBadges[i].label} overlaps element text`,
+        );
+      }
+    }
+  }
+
+  // Chấm cực tính của Z1 & Z2 không bị nhãn nào che phủ
+  const dotZ1 = rotatePoint(23, -11, state.elements[1].rotation);
+  const dotZ1Rect = { x: 100 + dotZ1.dx - 4, y: 200 + dotZ1.dy - 4, w: 8, h: 8 };
+  const dotZ2Rect = { x: 300 - 23 - 4, y: 140 - 11 - 4, w: 8, h: 8 };
+  for (const b of allBadges) {
+    assert.equal(rectsOverlap(b, dotZ1Rect, 0, 0), false, `Badge ${b.label} covers Z1 polarity dot`);
+    assert.equal(rectsOverlap(b, dotZ2Rect, 0, 0), false, `Badge ${b.label} covers Z2 polarity dot`);
+  }
+});
+
 
 

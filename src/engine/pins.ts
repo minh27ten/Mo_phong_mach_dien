@@ -187,6 +187,13 @@ export function isValidComponentType(type: unknown): type is ComponentType {
   return typeof type === 'string' && VALID_COMPONENT_TYPES.has(type);
 }
 
+export function normalizeRotation(deg: number): number {
+  if (!Number.isFinite(deg)) return 0;
+  const mod = ((deg % 360) + 360) % 360;
+  const rounded = Math.round(mod * 1000) / 1000;
+  return rounded >= 360 ? 0 : rounded;
+}
+
 export function hasVerticalPins(el: Pick<CircuitElement, 'type' | 'rotation'>): boolean {
   const verticallyOrientedByDefault =
     el.type === 'V_SRC' ||
@@ -195,9 +202,10 @@ export function hasVerticalPins(el: Pick<CircuitElement, 'type' | 'rotation'>): 
     el.type === 'CCVS' ||
     el.type === 'VCCS' ||
     el.type === 'CCCS';
-  return verticallyOrientedByDefault
-    ? el.rotation === 0 || el.rotation === 180
-    : el.rotation === 90 || el.rotation === 270;
+  const norm = normalizeRotation(el.rotation);
+  const axisDeg = verticallyOrientedByDefault ? norm + 90 : norm;
+  const rad = (axisDeg * Math.PI) / 180;
+  return Math.abs(Math.sin(rad)) > 0.75;
 }
 
 export function getLocalPins(el: Pick<CircuitElement, 'type' | 'opampInvertPins'>): PinDef[] {
@@ -275,17 +283,19 @@ export interface WorldPin {
   key: string; // `${elementId}:${pinId}`
 }
 
-export function rotatePoint(dx: number, dy: number, rotation: 0 | 90 | 180 | 270): { dx: number; dy: number } {
-  switch (rotation) {
-    case 0:
-      return { dx, dy };
-    case 90:
-      return { dx: -dy, dy: dx };
-    case 180:
-      return { dx: -dx, dy: -dy };
-    case 270:
-      return { dx: dy, dy: -dx };
-  }
+export function rotatePoint(dx: number, dy: number, rotation: number): { dx: number; dy: number } {
+  const norm = normalizeRotation(rotation);
+  if (norm === 0) return { dx, dy };
+  if (norm === 90) return { dx: -dy, dy: dx };
+  if (norm === 180) return { dx: -dx, dy: -dy };
+  if (norm === 270) return { dx: dy, dy: -dx };
+  const rad = (norm * Math.PI) / 180;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return {
+    dx: dx * c - dy * s,
+    dy: dx * s + dy * c,
+  };
 }
 
 export function getElementWorldPins(el: CircuitElement): WorldPin[] {

@@ -30,6 +30,7 @@ import {
   getMutualDotPins,
   getMutualValueMode,
   isMutualCouplableType,
+  normalizeRotation,
 } from '../engine/pins';
 import {
   extractTheveninNorton,
@@ -54,7 +55,7 @@ interface InspectorPanelProps {
   simulationResult: SimulationResult | null;
   onSelectElement?: (id: string) => void;
   onUpdateElement: (id: string, patch: Partial<CircuitElement>) => void;
-  onRotateElement: (id: string) => void;
+  onRotateElement: (id: string, deltaDeg?: number) => void;
   onDeleteElement: (id: string) => void;
   onDeleteWire: (id: string) => void;
   onRunTransientNow: () => void;
@@ -318,9 +319,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
-                onClick={() => onRotateElement(el.id)}
+                onClick={() => onRotateElement(el.id, 90)}
                 aria-label={`Xoay phần tử ${el.name} 90 độ`}
-                title="Xoay 90° (Phím R)"
+                title="Xoay 90° (Phím R) · Shift+R: +45°"
                 className="p-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
               >
                 <RotateCw className="w-3.5 h-3.5" />
@@ -337,22 +338,70 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             </div>
           </div>
 
-          {/* Định danh & góc xoay gọn nhẹ */}
-          <div className="flex items-center gap-2">
-            <label className="flex-1 flex items-center gap-1.5 bg-slate-50/70 border border-slate-200/80 rounded-lg px-2 py-1 focus-within:bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/15 transition-all">
-              <span className="text-[11px] font-medium text-slate-500 shrink-0">Ký hiệu</span>
-              <input
-                type="text"
-                value={el.name}
-                onChange={(e) => update({ name: e.target.value })}
-                className="w-full min-w-0 bg-transparent text-xs font-mono font-semibold text-slate-900 focus:outline-none text-right"
-              />
-            </label>
-            <div
-              className="shrink-0 px-2.5 py-1 text-[11px] font-mono tabular-nums bg-slate-50/70 border border-slate-200/80 rounded-lg text-slate-600"
-              title="Góc xoay hiện tại"
-            >
-              {el.rotation}°
+          {/* Ký hiệu phần tử */}
+          <label className="flex items-center gap-2 bg-slate-50/70 border border-slate-200/80 rounded-lg px-2.5 py-1.5 focus-within:bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/15 transition-all">
+            <span className="text-[11px] font-medium text-slate-500 shrink-0">Ký hiệu</span>
+            <input
+              type="text"
+              value={el.name}
+              onChange={(e) => update({ name: e.target.value })}
+              className="w-full min-w-0 bg-transparent text-xs font-mono font-semibold text-slate-900 focus:outline-none text-right"
+            />
+          </label>
+
+          {/* Chọn góc quay linh kiện (bước 45° & góc tùy ý) */}
+          <div className="space-y-1.5 pt-0.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-medium text-slate-600">Góc xoay</span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onRotateElement(el.id, -45)}
+                  title="Xoay ngược −45°"
+                  aria-label={`Xoay ${el.name} trừ 45 độ`}
+                  className="px-1.5 py-0.5 rounded-md border border-slate-200 bg-white text-[11px] font-mono text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  −45°
+                </button>
+                <div className="flex items-center bg-slate-50/70 border border-slate-200/80 rounded-md px-1.5 py-0.5 focus-within:bg-white focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/15 transition-all">
+                  <DraftNumInput
+                    ariaLabel="Góc xoay phần tử (độ)"
+                    value={normalizeRotation(el.rotation)}
+                    onChange={(val) => update({ rotation: normalizeRotation(val) })}
+                    className="w-11 bg-transparent text-xs font-mono tabular-nums font-semibold text-slate-900 text-right focus:outline-none"
+                  />
+                  <span className="text-[11px] font-mono text-slate-400 ml-0.5">°</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onRotateElement(el.id, 45)}
+                  title="Xoay +45° (Shift+R)"
+                  aria-label={`Xoay ${el.name} cộng 45 độ`}
+                  className="px-1.5 py-0.5 rounded-md border border-slate-200 bg-white text-[11px] font-mono text-slate-700 hover:bg-slate-50 transition-colors"
+                >
+                  +45°
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
+                const active = Math.abs(normalizeRotation(el.rotation) - deg) < 0.05;
+                return (
+                  <button
+                    key={deg}
+                    type="button"
+                    onClick={() => update({ rotation: deg })}
+                    title={deg === 315 ? '315° (−45°)' : deg === 225 ? '225° (−135°)' : `Đặt góc ${deg}°`}
+                    className={`py-0.5 rounded-md text-[10.5px] font-mono tabular-nums border transition-colors ${
+                      active
+                        ? 'bg-blue-50 border-blue-300 text-blue-700 font-semibold'
+                        : 'bg-slate-50/60 border-slate-200/70 text-slate-600 hover:bg-slate-100/70'
+                    }`}
+                  >
+                    {deg}°
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

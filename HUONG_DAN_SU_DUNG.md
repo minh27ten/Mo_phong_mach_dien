@@ -38,14 +38,15 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 ### Đặt, chọn & sắp xếp linh kiện
 - **Kéo – thả** phần tử từ cột trái vào lưới bản vẽ, hoặc **nhấp một lần** vào thẻ phần tử trong thư viện rồi nhấp lên vị trí bất kỳ trên bản vẽ.
 - **Chọn & di chuyển chính xác:** Khi rê chuột lên bất kỳ linh kiện nào (kể cả tụ điện `C`, cuộn dây `L`, điện trở `R`, tổng trở `Z` hay `GND`), khung nhận diện sẽ sáng nhẹ để xác nhận vùng click rộng trước khi nhấp chọn hoặc kéo di chuyển theo lưới `20 px`.
-- Nhấp vào phần tử rồi nhấn phím **`R`** (hoặc bấm nút **Xoay 90°** ở thanh pill nổi / thanh công cụ trên bản vẽ) để xoay góc `0° → 90° → 180° → 270°`.
+- Nhấp vào phần tử rồi nhấn phím **`R`** (+90°), **`Shift+R`** (+45°), dùng nút **`+45°` / `90°`** trên pill nổi, hoặc mở thẻ **Thông số** bên phải để nhập **góc xoay bất kỳ `[0, 360)`** hay chọn nhanh các góc `0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°` (hữu ích khi vẽ nhánh cầu chéo 45°).
 - Nhấp nút **`?`** ở góc trên bên phải bất cứ lúc nào để mở bảng **Hướng dẫn nhanh & Phím tắt**.
 
-### Vẽ dây dẫn trực giao (Wire Tool)
+### Vẽ dây dẫn trực giao & thẳng/chéo (Wire Tool)
 1. Nhấn phím **`W`** hoặc chọn biểu tượng **Nối dây** trên thanh công cụ (cũng có thể **nhấp trực tiếp vào một chân linh kiện** ở chế độ *Chọn* để bắt đầu đi dây ngay).
-2. Di chuyển chuột tới điểm gấp khúc hoặc chân đích; dây dẫn tự động bẻ góc vuông `90°`.
-3. Nhấn **`Space`** trong lúc đang vẽ dây để đổi chiều gập góc (ngang trước hoặc dọc trước).
+2. Di chuyển chuột tới điểm gấp khúc hoặc chân đích; dây dẫn tự động bẻ góc vuông `90°`, hoặc giữ phím **`Shift`** (hay bấm nút **Kiểu: Vuông góc / Thẳng-Chéo** trên thanh trạng thái) để đi **đường thẳng / chéo 45°** nối thẳng vào các chân linh kiện xoay chéo off-grid.
+3. Nhấn **`Space`** trong lúc đang vẽ dây vuông góc để đổi chiều gập góc (ngang trước hoặc dọc trước).
 4. Nhấp vào chân linh kiện đích hoặc **nhấp đúp** để kết thúc đoạn dây; nhấn **`Esc`** nếu muốn hủy dây đang vẽ.
+5. **Nhãn mạch chống đè thông minh:** Công tắc **Nhãn mạch** ở góc dưới phải tự động né thân linh kiện, dây dẫn, tên phần tử và chấm cực tính hỗ cảm (`•`), kèm đường gióng nét đứt khi cần dời ra vùng thoáng.
 
 > **Lưu ý về giao điểm dây dẫn:**
 > - **Hai dây cắt chéo vuông góc qua nhau sẽ KHÔNG tự chập mạch** (đây là hai nhánh độc lập đi ngang qua nhau).
@@ -59,7 +60,8 @@ Giao diện của **Mạch Điện Lab** gồm 4 khu vực chính:
 | :--- | :--- |
 | `V` | Chuyển về công cụ **Chọn / Di chuyển** |
 | `W` | Chuyển sang công cụ **Nối dây** |
-| `R` | Xoay phần tử đang chọn **90° theo chiều kim đồng hồ** |
+| `R` / `Shift + R` | Xoay phần tử đang chọn **90°** hoặc **+45° theo chiều kim đồng hồ** |
+| `Shift` *(khi nối dây)* | Chuyển tạm giữa đi dây **Vuông góc** và **Thẳng / Chéo 45°** |
 | `Space` | Đảo hướng bẻ góc dây dẫn khi đang vẽ dây |
 | `F` | Căn giữa và thu phóng toàn bộ sơ đồ vừa khít khung nhìn |
 | `Delete` / `Backspace` | Xóa phần tử hoặc đoạn dây đang chọn |

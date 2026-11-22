@@ -25,7 +25,13 @@ import {
   Wire,
   WirePoint,
 } from './types/circuit';
-import { createDefaultElement, getElementWorldPins, isValidComponentType, snapToGrid } from './engine/pins';
+import {
+  createDefaultElement,
+  getElementWorldPins,
+  isValidComponentType,
+  normalizeRotation,
+  snapToGrid,
+} from './engine/pins';
 import { buildNetlist } from './engine/netlist';
 import { runSimulation } from './engine/mna';
 import { CIRCUIT_PRESETS, CircuitPreset } from './data/presets';
@@ -217,14 +223,12 @@ export default function App() {
   };
 
   const handleRotateElement = useCallback(
-    (id: string) => {
+    (id: string, deltaDeg = 90) => {
       pushHistory(circuit);
       setCircuit((prev) => ({
         ...prev,
         elements: prev.elements.map((el) =>
-          el.id === id
-            ? { ...el, rotation: ((el.rotation + 90) % 360) as CircuitElement['rotation'] }
-            : el,
+          el.id === id ? { ...el, rotation: normalizeRotation(el.rotation + deltaDeg) } : el,
         ),
       }));
       setSimulationResult(null);
@@ -517,7 +521,8 @@ export default function App() {
               isValidComponentType(c.type) &&
               Number.isFinite(c.x) &&
               Number.isFinite(c.y) &&
-              [0, 90, 180, 270].includes(c.rotation) &&
+              typeof c.rotation === 'number' &&
+              Number.isFinite(c.rotation) &&
               validWf &&
               validHarmonics &&
               validImpedance &&
@@ -542,7 +547,10 @@ export default function App() {
         }
 
         const nextCircuit: CircuitState = {
-          elements: rawCircuit.elements,
+          elements: (rawCircuit.elements as CircuitElement[]).map((item) => ({
+            ...item,
+            rotation: normalizeRotation(item.rotation),
+          })),
           wires: rawCircuit.wires,
         };
         const validModes: SimulationMode[] = ['DC', 'DC_SS', 'AC', 'TRANSIENT'];
@@ -629,7 +637,7 @@ export default function App() {
         setTool((prev) => (prev === 'WIRE' ? 'SELECT' : 'WIRE'));
         setPlacingType(null);
       } else if ((e.key === 'r' || e.key === 'R') && selectedElementId && !e.ctrlKey && !e.metaKey) {
-        handleRotateElement(selectedElementId);
+        handleRotateElement(selectedElementId, e.shiftKey ? 45 : 90);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedElementId) handleDeleteElement(selectedElementId);
         else if (selectedWireId) handleDeleteWire(selectedWireId);
@@ -1062,7 +1070,7 @@ export default function App() {
           >
             <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
               <div>
-                <h2 className="text-sm font-semibold text-slate-900">Làm quen nhanh · MạchĐiệnLab v1.4</h2>
+                <h2 className="text-sm font-semibold text-slate-900">Làm quen nhanh · MạchĐiệnLab v1.5</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Thao tác thiết kế sơ đồ & mô phỏng mạch điện trực quan
                 </p>
@@ -1079,15 +1087,15 @@ export default function App() {
 
             <div className="grid grid-cols-3 gap-2.5 text-xs">
               <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
-                <div className="font-semibold text-blue-700">1. Đặt linh kiện</div>
+                <div className="font-semibold text-blue-700">1. Đặt & Xoay góc</div>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Kéo từ cột trái hoặc nhấp chọn rồi click lên lưới. Nhấn <kbd className="px-1 bg-white border rounded font-mono">R</kbd> để xoay.
+                  Kéo từ cột trái hoặc click đặt lên lưới. Nhấn <kbd className="px-1 bg-white border rounded font-mono">R</kbd> (90°), <kbd className="px-1 bg-white border rounded font-mono">Shift+R</kbd> (45°) hoặc nhập góc tùy ý.
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
-                <div className="font-semibold text-blue-700">2. Nối dây vuông góc</div>
+                <div className="font-semibold text-blue-700">2. Nối dây linh hoạt</div>
                 <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Nhấn <kbd className="px-1 bg-white border rounded font-mono">W</kbd> hoặc click thẳng vào chân linh kiện. Dây cắt chéo không tự chập.
+                  Nhấn <kbd className="px-1 bg-white border rounded font-mono">W</kbd> hoặc click chân linh kiện. Giữ <kbd className="px-1 bg-white border rounded font-mono">Shift</kbd> để nối thẳng/chéo 45°.
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-200/70 space-y-1">
@@ -1106,7 +1114,8 @@ export default function App() {
                 {[
                   ['V / W', 'Công cụ Chọn / Nối dây'],
                   ['Space', 'Đảo góc bẻ khi nối dây'],
-                  ['R', 'Xoay phần tử 90°'],
+                  ['Shift (nối dây)', 'Nối đường thẳng / chéo 45°'],
+                  ['R / Shift + R', 'Xoay phần tử 90° / +45°'],
                   ['F', 'Khớp sơ đồ vào khung nhìn'],
                   ['Del', 'Xóa phần tử hoặc dây đang chọn'],
                   ['Ctrl + Z / Y', 'Hoàn tác / Làm lại'],

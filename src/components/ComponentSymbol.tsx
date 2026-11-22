@@ -24,6 +24,7 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
   const accent = '#2563EB';
   const muted = '#64748B';
   const sw = isPaletteIcon ? 2 : 1.75;
+  const rot = element?.rotation ?? 0;
 
   const renderGlyph = () => {
     switch (type) {
@@ -101,7 +102,17 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             <line x1={-4} y1={-14} x2={-4} y2={14} strokeWidth={2.2} />
             <line x1={4} y1={-14} x2={4} y2={14} strokeWidth={2.2} />
             {!isPaletteIcon && (
-              <text x={-14} y={-10} fontSize={9} fill={muted} stroke="none" className="font-mono">
+              <text
+                x={-14}
+                y={-12}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={9}
+                fill={muted}
+                stroke="none"
+                transform={rot ? `rotate(${-rot}, -14, -12)` : undefined}
+                className="font-mono"
+              >
                 +
               </text>
             )}
@@ -117,8 +128,7 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             {hasDotAtPin2 && <circle cx={22} cy={-10} r={2.8} fill="#DC2626" stroke="none" />}
           </g>
         );
-      case 'IMPEDANCE': {
-        const rot = element?.rotation ?? 0;
+      case 'IMPEDANCE':
         return (
           <g stroke={stroke} strokeWidth={sw} fill="none">
             <line x1={-40} y1={0} x2={-20} y2={0} />
@@ -142,7 +152,6 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             {hasDotAtPin2 && <circle cx={23} cy={-11} r={2.8} fill="#DC2626" stroke="none" />}
           </g>
         );
-      }
       case 'MUTUAL':
         return (
           <g stroke={stroke} strokeWidth={sw} fill="none">
@@ -158,12 +167,14 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             />
             <text
               x={0}
-              y={-1}
+              y={-4}
               textAnchor="middle"
+              dominantBaseline="central"
               fontSize={10}
               fontWeight={700}
               fill="#B45309"
               stroke="none"
+              transform={rot ? `rotate(${-rot}, 0, -4)` : undefined}
               className="font-mono"
             >
               {element?.mutualValueMode === 'Z_OHM' ? 'Z_M' : 'M'}
@@ -179,6 +190,9 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
       case 'CCCS': {
         const isVoltage = type === 'VCVS' || type === 'CCVS';
         const tag = type === 'VCVS' ? 'μU' : type === 'CCVS' ? 'rI' : type === 'VCCS' ? 'gU' : 'βI';
+        const rad = ((rot % 360) * Math.PI) / 180;
+        const axisVertical = Math.abs(Math.cos(rad)) > 0.75;
+        const tagPos = axisVertical ? { x: 26, y: 0 } : { x: 24, y: -15 };
         return (
           <g stroke={stroke} strokeWidth={sw} fill="none">
             <line x1={0} y1={-40} x2={0} y2={-20} />
@@ -197,17 +211,21 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
               </>
             )}
             {!isPaletteIcon && (
-              <text
-                x={24}
-                y={-8}
-                fontSize={10}
-                fontWeight={600}
-                fill={accent}
-                stroke="none"
-                className="font-mono"
-              >
-                {tag}
-              </text>
+              <g transform={rot ? `rotate(${-rot})` : undefined}>
+                <text
+                  x={tagPos.x}
+                  y={tagPos.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={10}
+                  fontWeight={600}
+                  fill={accent}
+                  stroke="none"
+                  className="font-mono"
+                >
+                  {tag}
+                </text>
+              </g>
             )}
           </g>
         );
@@ -220,12 +238,14 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             <rect x={-24} y={-15} width={48} height={30} rx={3} fill="#FFFFFF" />
             <text
               x={0}
-              y={4}
+              y={0}
               textAnchor="middle"
+              dominantBaseline="central"
               fontSize={10}
               fontWeight={600}
               fill={stroke}
               stroke="none"
+              transform={rot ? `rotate(${-rot})` : undefined}
               className="font-mono"
             >
               {element?.onePortMode === 'NORTON' ? 'N' : 'Th'}
@@ -242,22 +262,24 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             <rect x={-32} y={-48} width={64} height={96} rx={4} fill="#FFFFFF" />
             <text
               x={0}
-              y={4}
+              y={0}
               textAnchor="middle"
+              dominantBaseline="central"
               fontSize={12}
               fontWeight={700}
               fill={accent}
               stroke="none"
+              transform={rot ? `rotate(${-rot})` : undefined}
               className="font-mono"
             >
               [{element?.twoPortType ?? 'Z'}]
             </text>
             {!isPaletteIcon && (
               <>
-                <text x={-26} y={-36} fontSize={9} fill={muted} stroke="none" className="font-mono">1</text>
-                <text x={-26} y={43} fontSize={9} fill={muted} stroke="none" className="font-mono">1'</text>
-                <text x={20} y={-36} fontSize={9} fill={muted} stroke="none" className="font-mono">2</text>
-                <text x={20} y={43} fontSize={9} fill={muted} stroke="none" className="font-mono">2'</text>
+                <text x={-23} y={-39} textAnchor="middle" dominantBaseline="central" fontSize={9} fill={muted} stroke="none" transform={rot ? `rotate(${-rot}, -23, -39)` : undefined} className="font-mono">1</text>
+                <text x={-23} y={40} textAnchor="middle" dominantBaseline="central" fontSize={9} fill={muted} stroke="none" transform={rot ? `rotate(${-rot}, -23, 40)` : undefined} className="font-mono">1'</text>
+                <text x={23} y={-39} textAnchor="middle" dominantBaseline="central" fontSize={9} fill={muted} stroke="none" transform={rot ? `rotate(${-rot}, 23, -39)` : undefined} className="font-mono">2</text>
+                <text x={23} y={40} textAnchor="middle" dominantBaseline="central" fontSize={9} fill={muted} stroke="none" transform={rot ? `rotate(${-rot}, 23, 40)` : undefined} className="font-mono">2'</text>
               </>
             )}
           </g>
@@ -272,10 +294,30 @@ export const ComponentSymbol: React.FC<SymbolProps> = ({
             <line x1={-40} y1={20} x2={-24} y2={20} />
             <line x1={26} y1={0} x2={40} y2={0} />
             <polygon points="-24,-32 26,0 -24,32" fill="#FFFFFF" />
-            <text x={-18} y={yPlus + 4} fontSize={12} fontWeight={700} fill="#059669" stroke="none">
+            <text
+              x={-15}
+              y={yPlus}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={12}
+              fontWeight={700}
+              fill="#059669"
+              stroke="none"
+              transform={rot ? `rotate(${-rot}, -15, ${yPlus})` : undefined}
+            >
               +
             </text>
-            <text x={-18} y={yMinus + 4} fontSize={13} fontWeight={700} fill="#DC2626" stroke="none">
+            <text
+              x={-15}
+              y={yMinus}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={13}
+              fontWeight={700}
+              fill="#DC2626"
+              stroke="none"
+              transform={rot ? `rotate(${-rot}, -15, ${yMinus})` : undefined}
+            >
               −
             </text>
           </g>

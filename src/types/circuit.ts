@@ -49,7 +49,7 @@ export interface CircuitElement {
   type: ComponentType;
   x: number;
   y: number;
-  rotation: 0 | 90 | 180 | 270;
+  rotation: number;
 
   // Nguồn độc lập (V_SRC, I_SRC)
   waveform?: SourceWaveform;

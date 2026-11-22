@@ -27,10 +27,15 @@ import {
   getElementWorldPins,
   getMutualDotPins,
   GRID_SIZE,
-  hasVerticalPins,
+  normalizeRotation,
   snapToGrid,
   WorldPin,
 } from '../engine/pins';
+import {
+  computeOverlayLayout,
+  getLocalHighlightBox,
+  getRotatedBoxTopExtent,
+} from '../engine/labelLayout';
 import { buildNetlist, NetlistGraph } from '../engine/netlist';
 import { ComponentSymbol, getElementSummaryText } from './ComponentSymbol';
 import { DraftNumInput } from './DraftNumInput';
@@ -62,36 +67,21 @@ interface SchematicCanvasProps {
   onPlaceComponent: (type: ComponentType, x: number, y: number) => void;
   onMoveElement: (id: string, x: number, y: number) => void;
   onBeginDragElement: () => void;
-  onRotateElement?: (id: string) => void;
+  onRotateElement?: (id: string, deltaDeg?: number) => void;
   onDeleteElement?: (id: string) => void;
   onDeleteWire?: (id: string) => void;
   onAddWire: (points: WirePoint[]) => void;
   onCancelPlace: () => void;
 }
 
-function getElementHighlightBox(el: CircuitElement): { x: number; y: number; w: number; h: number } {
-  const isVertical = hasVerticalPins(el);
-  if (el.type.startsWith('THREE_PHASE')) {
-    return isVertical ? { x: -76, y: -68, w: 152, h: 136 } : { x: -68, y: -76, w: 136, h: 152 };
-  }
-  if (el.type === 'TWO_PORT') {
-    return isVertical ? { x: -54, y: -68, w: 108, h: 136 } : { x: -68, y: -54, w: 136, h: 108 };
-  }
-  if (el.type === 'GND') {
-    return { x: -24, y: -26, w: 48, h: 48 };
-  }
-  if (el.type === 'MUTUAL') {
-    return isVertical ? { x: -24, y: -34, w: 48, h: 68 } : { x: -34, y: -24, w: 68, h: 48 };
-  }
-  if (el.type === 'OPAMP') {
-    return isVertical ? { x: -40, y: -44, w: 80, h: 88 } : { x: -44, y: -40, w: 88, h: 80 };
-  }
-  return isVertical ? { x: -26, y: -44, w: 52, h: 88 } : { x: -44, y: -26, w: 88, h: 52 };
-}
-
-function buildOrthogonalPath(a: WirePoint, b: WirePoint, horizontalFirst: boolean): WirePoint[] {
+function buildWirePath(
+  a: WirePoint,
+  b: WirePoint,
+  horizontalFirst: boolean,
+  direct: boolean,
+): WirePoint[] {
   if (a.x === b.x && a.y === b.y) return [a];
-  if (a.x === b.x || a.y === b.y) return [a, b];
+  if (direct || a.x === b.x || a.y === b.y) return [a, b];
   const corner = horizontalFirst ? { x: b.x, y: a.y } : { x: a.x, y: b.y };
   return [a, corner, b];
 }
@@ -103,10 +93,16 @@ function simplifyPolyline(pts: WirePoint[]): WirePoint[] {
     const prev = out[out.length - 1];
     const curr = pts[i];
     const next = pts[i + 1];
-    const collinearX = prev.x === curr.x && curr.x === next.x;
-    const collinearY = prev.y === curr.y && curr.y === next.y;
-    const duplicate = prev.x === curr.x && prev.y === curr.y;
-    if (!collinearX && !collinearY && !duplicate) {
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    const len1 = Math.hypot(dx1, dy1);
+    const len2 = Math.hypot(dx2, dy2);
+    if (len1 < 1e-6 || len2 < 1e-6) continue;
+    const cross = Math.abs(dx1 * dy2 - dy1 * dx2) / Math.max(len1, len2);
+    const sameDir = dx1 * dx2 + dy1 * dy2 >= 0;
+    if (!(cross <= 1e-4 && sameDir)) {
       out.push(curr);
     }
   }
@@ -118,19 +114,17 @@ function simplifyPolyline(pts: WirePoint[]): WirePoint[] {
   return out;
 }
 
-function pointTouchesWire(pt: WirePoint, wires: Wire[]): boolean {
+function pointTouchesWire(pt: WirePoint, wires: Wire[], tol = 1.5): boolean {
   return wires.some((w) =>
-    w.points.some((wp, idx) => {
+    w.points.some((a, idx) => {
       if (idx === w.points.length - 1) return false;
-      const a = wp;
       const b = w.points[idx + 1];
-      return (
-        pt.x >= Math.min(a.x, b.x) &&
-        pt.x <= Math.max(a.x, b.x) &&
-        pt.y >= Math.min(a.y, b.y) &&
-        pt.y <= Math.max(a.y, b.y) &&
-        (a.x === b.x ? pt.x === a.x : pt.y === a.y)
-      );
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const lenSq = abx * abx + aby * aby;
+      if (lenSq < 1e-6) return Math.hypot(pt.x - a.x, pt.y - a.y) <= tol;
+      const t = Math.max(0, Math.min(1, ((pt.x - a.x) * abx + (pt.y - a.y) * aby) / lenSq));
+      return Math.hypot(pt.x - (a.x + t * abx), pt.y - (a.y + t * aby)) <= tol;
     }),
   );
 }
@@ -176,6 +170,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
   const [cursorWorld, setCursorWorld] = useState<WirePoint>({ x: 0, y: 0 });
   const [wireDraft, setWireDraft] = useState<WirePoint[] | null>(null);
+  const [wireRouting, setWireRouting] = useState<'ORTHO' | 'DIRECT'>('ORTHO');
+  const [shiftHeld, setShiftHeld] = useState(false);
   const [horizontalFirst, setHorizontalFirst] = useState(true);
   const [manualBendLock, setManualBendLock] = useState(false);
   const [hoveredPinKey, setHoveredPinKey] = useState<string | null>(null);
@@ -243,6 +239,66 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     [pan, zoom],
   );
 
+  // Bắt điểm ưu tiên chân linh kiện xoay góc (off-grid), rồi đến dây dẫn và lưới 20px
+  const resolveWireTarget = useCallback(
+    (clientX: number, clientY: number): WirePoint => {
+      const raw = clientToWorld(clientX, clientY, false);
+      let bestPin: WorldPin | null = null;
+      let bestPinDist = 14;
+      for (const pin of worldPins) {
+        const d = Math.hypot(raw.x - pin.x, raw.y - pin.y);
+        if (d < bestPinDist) {
+          bestPinDist = d;
+          bestPin = pin;
+        }
+      }
+      if (bestPin) return { x: bestPin.x, y: bestPin.y };
+
+      const gridPt = { x: snapToGrid(raw.x), y: snapToGrid(raw.y) };
+      if (wireDraft || tool === 'WIRE') {
+        if (pointTouchesWire(gridPt, wires, 1.5) && Math.hypot(raw.x - gridPt.x, raw.y - gridPt.y) <= 12) {
+          return gridPt;
+        }
+        let bestVertex: WirePoint | null = null;
+        let bestVertexDist = 10;
+        let bestWirePt: WirePoint | null = null;
+        let bestWireDist = 8;
+        for (const w of wires) {
+          for (const vp of w.points) {
+            const vd = Math.hypot(raw.x - vp.x, raw.y - vp.y);
+            if (vd < bestVertexDist) {
+              bestVertexDist = vd;
+              bestVertex = vp;
+            }
+          }
+          for (let i = 0; i < w.points.length - 1; i++) {
+            const a = w.points[i];
+            const b = w.points[i + 1];
+            const abx = b.x - a.x;
+            const aby = b.y - a.y;
+            const lenSq = abx * abx + aby * aby;
+            if (lenSq < 1e-6) continue;
+            const t = Math.max(0, Math.min(1, ((raw.x - a.x) * abx + (raw.y - a.y) * aby) / lenSq));
+            const px = a.x + t * abx;
+            const py = a.y + t * aby;
+            const d = Math.hypot(raw.x - px, raw.y - py);
+            if (d < bestWireDist) {
+              bestWireDist = d;
+              bestWirePt = { x: Math.round(px), y: Math.round(py) };
+            }
+          }
+        }
+        if (bestVertex) return { x: bestVertex.x, y: bestVertex.y };
+        if (bestWirePt) return bestWirePt;
+      }
+
+      return gridPt;
+    },
+    [clientToWorld, worldPins, wireDraft, tool, wires],
+  );
+
+  const useDirectWire = (wireRouting === 'DIRECT') !== shiftHeld;
+
   const handleFitView = useCallback(() => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect || elements.length === 0) {
@@ -293,9 +349,10 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitTrigger]);
 
-  // Phím tắt cục bộ của Canvas: Space (đổi hướng gấp khúc dây), F (khớp khung nhìn), Esc (hủy dây đang vẽ)
+  // Phím tắt cục bộ của Canvas: Space (đổi hướng gấp khúc dây), Shift (nối thẳng/chéo), F (khớp khung nhìn), Esc (hủy dây đang vẽ)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftHeld(true);
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
@@ -311,14 +368,25 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         handleFitView();
       }
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftHeld(false);
+    };
+    const onBlur = () => setShiftHeld(false);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
   }, [wireDraft, handleFitView]);
 
-  const finishWireAt = (targetPt: WirePoint) => {
+  const finishWireAt = (targetPt: WirePoint, directOverride?: boolean) => {
     if (!wireDraft || wireDraft.length === 0) return;
     const last = wireDraft[wireDraft.length - 1];
-    const seg = buildOrthogonalPath(last, targetPt, horizontalFirst);
+    const direct = directOverride ?? useDirectWire;
+    const seg = buildWirePath(last, targetPt, horizontalFirst, direct);
     const full = simplifyPolyline([...wireDraft, ...seg.slice(1)]);
     if (full.length >= 2) {
       onAddWire(full);
@@ -335,7 +403,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       setHorizontalFirst(true);
       setManualBendLock(false);
     } else {
-      finishWireAt(pinPt);
+      const direct = (wireRouting === 'DIRECT') !== e.shiftKey;
+      finishWireAt(pinPt, direct);
     }
   };
 
@@ -350,18 +419,20 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
       return;
     }
 
-    const pt = clientToWorld(e.clientX, e.clientY, true);
-
     if (placingType) {
-      onPlaceComponent(placingType, pt.x, pt.y);
+      const gridPt = clientToWorld(e.clientX, e.clientY, true);
+      onPlaceComponent(placingType, gridPt.x, gridPt.y);
       return;
     }
 
+    const pt = resolveWireTarget(e.clientX, e.clientY);
+
     if (wireDraft) {
       const last = wireDraft[wireDraft.length - 1];
-      const seg = buildOrthogonalPath(last, pt, horizontalFirst);
+      const direct = (wireRouting === 'DIRECT') !== e.shiftKey;
+      const seg = buildWirePath(last, pt, horizontalFirst, direct);
       const nextPts = simplifyPolyline([...wireDraft, ...seg.slice(1)]);
-      const hitPin = worldPins.some((p) => p.x === pt.x && p.y === pt.y);
+      const hitPin = worldPins.some((p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= 1.5);
       const hitWire = pointTouchesWire(pt, wires);
       if (hitPin || hitWire) {
         if (nextPts.length >= 2) onAddWire(nextPts);
@@ -392,7 +463,7 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
   };
 
   const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const pt = clientToWorld(e.clientX, e.clientY, true);
+    const pt = tool === 'WIRE' || wireDraft ? resolveWireTarget(e.clientX, e.clientY) : clientToWorld(e.clientX, e.clientY, true);
     setCursorWorld(pt);
 
     if (wireDraft && wireDraft.length > 0 && !manualBendLock) {
@@ -471,135 +542,31 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     onPlaceComponent(type, pt.x, pt.y);
   };
 
-  // Tính toán hộp nhãn nút & dòng nhánh có chống chồng chéo hai lớp
-  const { nodeBadges, branchCurrentPositions } = useMemo(() => {
-    const placed: Array<{ x: number; y: number; w: number; h: number }> = [];
-    const collides = (x: number, y: number, w: number, h: number) =>
-      placed.some(
-        (p) => x < p.x + p.w + 4 && x + w + 4 > p.x && y < p.y + p.h + 3 && y + h + 3 > p.y,
-      );
-
-    const firstPointByNode = new Map<string, WirePoint>();
-    for (const pin of worldPins) {
-      const nid = netlist.nodeMap[pin.key];
-      if (!nid || nid === '0') continue;
-      if (!firstPointByNode.has(nid)) {
-        firstPointByNode.set(nid, { x: pin.x, y: pin.y });
-      }
-    }
-
-    const nBadges = Array.from(firstPointByNode.entries()).map(([nodeId, pt]) => {
-      const nRes = simulationResult?.success
-        ? simulationResult.nodes.find((n) => n.nodeId === nodeId)
-        : undefined;
-      let vText = `N${nodeId}`;
-      if (nRes) {
-        if (simulationResult?.singleFrequencyHz != null && nRes.phasorMag !== undefined) {
-          vText = `N${nodeId}: ${nRes.phasorMag.toFixed(1)}∠${nRes.phasorDeg?.toFixed(0)}°V`;
-        } else {
-          const val = simulationResult?.mode === 'AC' ? nRes.rms : nRes.dc;
-          vText = `N${nodeId}: ${val.toFixed(2)}V`;
-        }
-      }
-      const boxW = Math.max(28, vText.length * 5.7 + 12);
-      const boxH = 16;
-      const candidates = [
-        { x: pt.x + 8, y: pt.y - 24 },
-        { x: pt.x - boxW - 8, y: pt.y - 24 },
-        { x: pt.x + 8, y: pt.y + 8 },
-        { x: pt.x + 8, y: pt.y - 42 },
-      ];
-      let chosen = candidates[0];
-      for (const c of candidates) {
-        if (!collides(c.x, c.y, boxW, boxH)) {
-          chosen = c;
-          break;
-        }
-      }
-      placed.push({ x: chosen.x, y: chosen.y, w: boxW, h: boxH });
-      return { nodeId, pt, bx: chosen.x, by: chosen.y, boxW, boxH, vText, result: nRes };
-    });
-
-    const bMap = new Map<
-      string,
-      { relX: number; relY: number; boxW: number; boxH: number; text: string }
-    >();
-
-    if (simulationResult?.success) {
-      for (const el of elements) {
-        if (el.type === 'GND' || el.type === 'MUTUAL') continue;
-        const branchRes = simulationResult.elements.find((b) => b.elementId === el.id);
-        if (!branchRes) continue;
-
-        const isVerticalPins = hasVerticalPins(el);
-
-        const isThreePhase = el.type.startsWith('THREE_PHASE');
-        const isTwoPort = el.type === 'TWO_PORT';
-        const text =
-          simulationResult.singleFrequencyHz != null && branchRes.currentPhasorMag !== undefined
-            ? `I=${branchRes.currentPhasorMag.toFixed(2)}∠${branchRes.currentPhasorDeg?.toFixed(0)}°A`
-            : `I=${branchRes.currentRms.toFixed(3)}A`;
-
-        const boxW = Math.max(58, text.length * 5.7 + 12);
-        const boxH = 16;
-
-        const baseRelPositions =
-          isVerticalPins && !isThreePhase && !isTwoPort
-            ? [
-                { rx: 24, ry: -boxH / 2 },
-                { rx: 24, ry: 16 },
-                { rx: -24 - boxW, ry: 18 },
-              ]
-            : [
-                {
-                  rx: -boxW / 2,
-                  ry: (isThreePhase ? 96 : isTwoPort ? 72 : 34) - boxH / 2,
-                },
-                {
-                  rx: -boxW / 2,
-                  ry: (isThreePhase ? -102 : isTwoPort ? -82 : -46) - boxH / 2,
-                },
-                { rx: 46, ry: -boxH / 2 },
-              ];
-
-        let picked = baseRelPositions[0];
-        for (const cand of baseRelPositions) {
-          const wx = el.x + cand.rx;
-          const wy = el.y + cand.ry;
-          if (!collides(wx, wy, boxW, boxH)) {
-            picked = cand;
-            break;
-          }
-        }
-        placed.push({
-          x: el.x + picked.rx,
-          y: el.y + picked.ry,
-          w: boxW,
-          h: boxH,
-        });
-        bMap.set(el.id, {
-          relX: picked.rx,
-          relY: picked.ry,
-          boxW,
-          boxH,
-          text,
-        });
-      }
-    }
-
-    return { nodeBadges: nBadges, branchCurrentPositions: bMap };
-  }, [worldPins, netlist, simulationResult, elements]);
+  // Bố cục chống đè nhãn phần tử, dòng nhánh và điện áp nút
+  const { textLayouts, nodeBadges, branchCurrentPositions } = useMemo(
+    () =>
+      computeOverlayLayout({
+        elements,
+        wires,
+        worldPins,
+        netlist,
+        simulationResult,
+        inductorDots,
+        getSummaryText: (el) => getElementSummaryText(el, elements),
+      }),
+    [elements, wires, worldPins, netlist, simulationResult, inductorDots],
+  );
 
   const previewWirePoints = useMemo(() => {
     if (!wireDraft || wireDraft.length === 0) return null;
     const last = wireDraft[wireDraft.length - 1];
-    const seg = buildOrthogonalPath(last, cursorWorld, horizontalFirst);
+    const seg = buildWirePath(last, cursorWorld, horizontalFirst, useDirectWire);
     return simplifyPolyline([...wireDraft, ...seg.slice(1)]);
-  }, [wireDraft, cursorWorld, horizontalFirst]);
+  }, [wireDraft, cursorWorld, horizontalFirst, useDirectWire]);
 
   const cursorSnapTarget = useMemo(() => {
     if (!wireDraft && tool !== 'WIRE') return null;
-    const pin = worldPins.find((p) => p.x === cursorWorld.x && p.y === cursorWorld.y);
+    const pin = worldPins.find((p) => Math.hypot(p.x - cursorWorld.x, p.y - cursorWorld.y) <= 1.5);
     if (pin) return { kind: 'PIN' as const, x: pin.x, y: pin.y, label: pin.label };
     if (wireDraft && pointTouchesWire(cursorWorld, wires)) {
       return { kind: 'WIRE' as const, x: cursorWorld.x, y: cursorWorld.y, label: 'Nối T' };
@@ -616,8 +583,9 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
     if (!selectedWireId) return null;
     const w = wires.find((item) => item.id === selectedWireId);
     if (!w || w.points.length < 2) return null;
-    const p0 = w.points[0];
-    const p1 = w.points[1];
+    const midIdx = Math.floor((w.points.length - 1) / 2);
+    const p0 = w.points[midIdx];
+    const p1 = w.points[midIdx + 1];
     return { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
   }, [wires, selectedWireId]);
 
@@ -647,8 +615,8 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         onDoubleClick={(e) => {
           if (!wireDraft || wireDraft.length === 0) return;
           e.stopPropagation();
-          const pt = clientToWorld(e.clientX, e.clientY, true);
-          finishWireAt(pt);
+          const pt = resolveWireTarget(e.clientX, e.clientY);
+          finishWireAt(pt, (wireRouting === 'DIRECT') !== e.shiftKey);
         }}
       >
         <defs>
@@ -794,15 +762,11 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
           {elements.map((el) => {
             const isSel = selectedElementId === el.id;
             const isElHovered = hoveredElementId === el.id && !isSel && !placingType && !wireDraft;
-            const highlightBox = getElementHighlightBox(el);
+            const highlightBox = getLocalHighlightBox(el.type);
             const dotInfo = inductorDots.get(el.id);
             const branchBadge = branchCurrentPositions.get(el.id);
+            const textLayout = textLayouts.get(el.id);
             const pins = pinsByElementId.get(el.id) ?? [];
-
-            const isVerticalPins = hasVerticalPins(el);
-
-            const isThreePhase = el.type.startsWith('THREE_PHASE');
-            const isTwoPort = el.type === 'TWO_PORT';
 
             return (
               <g
@@ -831,23 +795,22 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                 }}
                 className="cursor-pointer"
               >
-                {(isSel || isElHovered) && (
-                  <rect
-                    x={highlightBox.x}
-                    y={highlightBox.y}
-                    width={highlightBox.w}
-                    height={highlightBox.h}
-                    rx={8}
-                    fill={isSel ? '#EFF6FF' : '#F1F5F9'}
-                    fillOpacity={isSel ? 0.55 : 0.65}
-                    stroke={isSel ? '#3B82F6' : '#CBD5E1'}
-                    strokeWidth={isSel ? 1.3 : 1}
-                    strokeDasharray={isSel ? '4 2' : undefined}
-                    pointerEvents="none"
-                  />
-                )}
-
                 <g transform={`rotate(${el.rotation})`}>
+                  {(isSel || isElHovered) && (
+                    <rect
+                      x={highlightBox.x}
+                      y={highlightBox.y}
+                      width={highlightBox.w}
+                      height={highlightBox.h}
+                      rx={8}
+                      fill={isSel ? '#EFF6FF' : '#F1F5F9'}
+                      fillOpacity={isSel ? 0.55 : 0.65}
+                      stroke={isSel ? '#3B82F6' : '#CBD5E1'}
+                      strokeWidth={isSel ? 1.3 : 1}
+                      strokeDasharray={isSel ? '4 2' : undefined}
+                      pointerEvents="none"
+                    />
+                  )}
                   <ComponentSymbol
                     type={el.type}
                     element={el}
@@ -857,57 +820,32 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
                   />
                 </g>
 
-                {/* Nhãn tên và giá trị phần tử bố trí tránh chân dây */}
-                {el.type !== 'GND' &&
-                  (isVerticalPins && !isThreePhase && !isTwoPort ? (
-                    <g pointerEvents="none">
-                      <text
-                        x={-24}
-                        y={-3}
-                        textAnchor="end"
-                        fontSize={11}
-                        fontWeight={600}
-                        fill={isSel ? '#1D4ED8' : '#0F172A'}
-                        className="font-mono"
-                      >
-                        {el.name}
-                      </text>
-                      <text
-                        x={-24}
-                        y={10}
-                        textAnchor="end"
-                        fontSize={9.5}
-                        fill="#475569"
-                        className="font-mono"
-                      >
-                        {getElementSummaryText(el, elements)}
-                      </text>
-                    </g>
-                  ) : (
-                    <g pointerEvents="none">
-                      <text
-                        x={0}
-                        y={isThreePhase ? -78 : isTwoPort ? -56 : el.type === 'MUTUAL' ? -20 : -22}
-                        textAnchor="middle"
-                        fontSize={11}
-                        fontWeight={600}
-                        fill={isSel ? '#1D4ED8' : '#0F172A'}
-                        className="font-mono"
-                      >
-                        {el.name}
-                      </text>
-                      <text
-                        x={0}
-                        y={isThreePhase ? 84 : isTwoPort ? 62 : el.type === 'MUTUAL' ? 24 : 24}
-                        textAnchor="middle"
-                        fontSize={9.5}
-                        fill="#475569"
-                        className="font-mono"
-                      >
-                        {getElementSummaryText(el, elements)}
-                      </text>
-                    </g>
-                  ))}
+                {/* Nhãn tên và giá trị phần tử tự tránh thân & chân linh kiện */}
+                {textLayout && (
+                  <g pointerEvents="none">
+                    <text
+                      x={textLayout.name.x}
+                      y={textLayout.name.y}
+                      textAnchor={textLayout.name.anchor}
+                      fontSize={11}
+                      fontWeight={600}
+                      fill={isSel ? '#1D4ED8' : '#0F172A'}
+                      className="font-mono"
+                    >
+                      {el.name}
+                    </text>
+                    <text
+                      x={textLayout.summary.x}
+                      y={textLayout.summary.y}
+                      textAnchor={textLayout.summary.anchor}
+                      fontSize={9.5}
+                      fill="#475569"
+                      className="font-mono"
+                    >
+                      {getElementSummaryText(el, elements)}
+                    </text>
+                  </g>
+                )}
 
                 {/* Nhãn kết quả dòng nhánh động kích thước, tránh chồng lấn */}
                 {showOverlays && branchBadge && (
@@ -1004,29 +942,42 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
           {/* Nhãn nút & điện áp nút trực tiếp trên sơ đồ */}
           {showOverlays &&
-            nodeBadges.map(({ nodeId, bx, by, boxW, boxH, vText, result }) => (
-              <g key={`nb-${nodeId}`} transform={`translate(${bx}, ${by})`} pointerEvents="none">
-                <rect
-                  x={0}
-                  y={0}
-                  width={boxW}
-                  height={boxH}
-                  rx={4}
-                  fill={result ? '#EFF6FF' : '#F8FAFC'}
-                  stroke={result ? '#3B82F6' : '#CBD5E1'}
-                  strokeWidth={0.85}
-                />
-                <text
-                  x={boxW / 2}
-                  y={11}
-                  textAnchor="middle"
-                  fontSize={9}
-                  fontWeight={600}
-                  fill={result ? '#1E40AF' : '#475569'}
-                  className="font-mono tabular-nums"
-                >
-                  {vText}
-                </text>
+            nodeBadges.map(({ nodeId, bx, by, boxW, boxH, vText, result, leader }) => (
+              <g key={`nb-${nodeId}`} pointerEvents="none">
+                {leader && (
+                  <line
+                    x1={leader.x1}
+                    y1={leader.y1}
+                    x2={leader.x2}
+                    y2={leader.y2}
+                    stroke="#94A3B8"
+                    strokeWidth={0.9}
+                    strokeDasharray="2.5 2.5"
+                  />
+                )}
+                <g transform={`translate(${bx}, ${by})`}>
+                  <rect
+                    x={0}
+                    y={0}
+                    width={boxW}
+                    height={boxH}
+                    rx={4}
+                    fill={result ? '#EFF6FF' : '#F8FAFC'}
+                    stroke={result ? '#3B82F6' : '#CBD5E1'}
+                    strokeWidth={0.85}
+                  />
+                  <text
+                    x={boxW / 2}
+                    y={11}
+                    textAnchor="middle"
+                    fontSize={9}
+                    fontWeight={600}
+                    fill={result ? '#1E40AF' : '#475569'}
+                    className="font-mono tabular-nums"
+                  >
+                    {vText}
+                  </text>
+                </g>
               </g>
             ))}
 
@@ -1041,8 +992,9 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
 
       {/* Pill thao tác nhanh ngay trên phần tử / dây được chọn */}
       {!placingType && !wireDraft && selectedElement && (onRotateElement || onDeleteElement) && (() => {
-        const box = getElementHighlightBox(selectedElement);
-        const offsetPx = Math.abs(box.y) * zoom + 12;
+        const box = getLocalHighlightBox(selectedElement.type);
+        const offsetPx = getRotatedBoxTopExtent(box, selectedElement.rotation) * zoom + 12;
+        const normRot = normalizeRotation(selectedElement.rotation);
         return (
           <div
             style={{
@@ -1055,18 +1007,32 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
             <span className="text-[11px] font-mono font-semibold text-slate-700 px-1.5">
               {selectedElement.name}
             </span>
+            <span className="text-[10px] font-mono tabular-nums text-slate-400 pr-1">
+              {normRot}°
+            </span>
             <div className="w-px h-3.5 bg-slate-200" />
             {onRotateElement && (
-              <button
-                type="button"
-                onClick={() => onRotateElement(selectedElement.id)}
-                title="Xoay 90° (Phím R)"
-                aria-label={`Xoay nhanh ${selectedElement.name}`}
-                className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition-colors"
-              >
-                <RotateCw className="w-3 h-3" />
-                <span>Xoay</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onRotateElement(selectedElement.id, 45)}
+                  title="Xoay +45° (Shift+R)"
+                  aria-label={`Xoay ${selectedElement.name} 45 độ`}
+                  className="inline-flex items-center gap-0.5 px-1.5 py-1 rounded text-[11px] font-medium font-mono text-slate-700 hover:bg-slate-100 transition-colors"
+                >
+                  <span>+45°</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRotateElement(selectedElement.id, 90)}
+                  title="Xoay 90° (Phím R)"
+                  aria-label={`Xoay nhanh ${selectedElement.name}`}
+                  className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                >
+                  <RotateCw className="w-3 h-3" />
+                  <span>90°</span>
+                </button>
+              </>
             )}
             {onDeleteElement && (
               <button
@@ -1151,9 +1117,9 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
             <button
               type="button"
               disabled={!selectedElementId || !onRotateElement}
-              onClick={() => selectedElementId && onRotateElement?.(selectedElementId)}
+              onClick={() => selectedElementId && onRotateElement?.(selectedElementId, 90)}
               aria-label="Xoay phần tử đang chọn"
-              title="Xoay 90° (R)"
+              title="Xoay 90° (R) · Shift+R: +45°"
               className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-35 transition-colors"
             >
               <RotateCw className="w-3.5 h-3.5" />
@@ -1229,15 +1195,34 @@ export const SchematicCanvas: React.FC<SchematicCanvasProps> = ({
         </div>
 
         {(placingType || wireDraft || tool === 'WIRE') && (
-          <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-2.5">
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            className={`bg-slate-900/95 backdrop-blur-md text-white text-xs px-3.5 py-1.5 rounded-full shadow-md flex items-center gap-2.5 ${
+              placingType ? 'pointer-events-none' : 'pointer-events-auto'
+            }`}
+          >
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
             <span>
               {placingType
                 ? 'Nhấp vào lưới để đặt phần tử · Chuột phải hoặc Esc để hủy'
                 : wireDraft
-                  ? 'Nhấp chân đích, nhấp đúp hoặc chạm dây để nối · Space đổi góc · Esc hủy'
+                  ? 'Nhấp chân đích, nhấp đúp hoặc chạm dây · Space đổi góc · Giữ Shift: thẳng/chéo · Esc hủy'
                   : 'Chế độ nối dây: Nhấp chân linh kiện hoặc lưới để bắt đầu · Esc thoát'}
             </span>
+            {!placingType && (
+              <button
+                type="button"
+                onClick={() => setWireRouting((r) => (r === 'ORTHO' ? 'DIRECT' : 'ORTHO'))}
+                title="Chuyển kiểu nối dây Vuông góc (90°) / Thẳng-Chéo (hoặc giữ Shift)"
+                className={`px-2 py-0.5 rounded-full text-[11px] font-medium border transition-colors ${
+                  useDirectWire
+                    ? 'bg-blue-500/30 border-blue-400 text-blue-200 hover:bg-blue-500/45'
+                    : 'bg-slate-800 border-slate-600 text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                {useDirectWire ? 'Kiểu: Thẳng/Chéo' : 'Kiểu: Vuông góc'}
+              </button>
+            )}
           </div>
         )}
       </div>

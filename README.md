@@ -1,9 +1,9 @@
-# MạchĐiệnLab — Phần Mềm Mô Phỏng Mạch Điện & Hệ Thống Điện (`v1.4.0`)
+# MạchĐiệnLab — Phần Mềm Mô Phỏng Mạch Điện & Hệ Thống Điện (`v1.5.0`)
 
 **MạchĐiệnLab** là ứng dụng mô phỏng mạch điện và hệ thống điện **chạy 100% cục bộ trên máy người dùng (Pure Client-Side)** dựa trên bộ giải giải tích nút cải biên **Modified Nodal Analysis (MNA)** — không cần máy chủ, không gửi dữ liệu ra ngoài và không cần API key.
 
 - 🌐 **Dùng thử trực tiếp trên trình duyệt:** https://minh27ten.github.io/Mo_phong_mach_dien/
-- 📦 **Tải bản cài đặt / Portable (`v1.4.0`):** https://github.com/minh27ten/Mo_phong_mach_dien/releases/latest
+- 📦 **Tải bản cài đặt / Portable (`v1.5.0`):** https://github.com/minh27ten/Mo_phong_mach_dien/releases/latest
 - 📖 **Tài liệu hướng dẫn thao tác chi tiết:** Xem [HUONG_DAN_SU_DUNG.md](./HUONG_DAN_SU_DUNG.md).
 
 ---
@@ -21,8 +21,11 @@ Bạn có thể tải sẵn bản đóng gói trong mục **GitHub Releases** c�
 
 ---
 
-## 🆕 Điểm mới ở `v1.4.0` & Lịch sử phát triển
+## 🆕 Điểm mới ở `v1.5.0` & Lịch sử phát triển
 
+- **`v1.5.0` — Chọn góc quay linh kiện 45° / tùy ý & Bố cục nhãn mạch chống đè:**
+  - **Xoay linh kiện theo góc 45° & góc bất kỳ `[0, 360)`:** Bổ sung bộ chọn góc nhanh (`−45°`, nhập số độ tùy ý, `+45°`, và lưới góc chuẩn `0° / 45° / 90° / 135° / 180° / 225° / 270° / 315°`) trong bảng *Thông số*, nút `+45°` / `90°` trên pill nổi, phím tắt `Shift+R` (`+45°`), khung chọn xoay theo linh kiện, chữ ký hiệu bên trong nguồn phụ thuộc/`Z`/`Th` luôn đứng thẳng, cùng chế độ **Nối dây Thẳng/Chéo** (giữ `Shift` hoặc chuyển nút kiểu dây) và tự bắt dính vào chân linh kiện xoay chéo off-grid.
+  - **Chống đè Nhãn mạch (`overlay`) thông minh:** Động cơ bố cục mới (`labelLayout.ts`) né toàn bộ thân linh kiện (kể cả góc chéo), chân linh kiện, **chấm cực tính hỗ cảm (`•`)**, nhãn tên/giá trị phần tử, dây dẫn và các nhãn khác trên mọi điểm neo của nút (chân, ngã ba, đỉnh/trung điểm dây), tự vẽ đường gióng nét đứt khi nhãn dời ra vùng thoáng.
 - **`v1.4.0` — Hitbox chính xác, Hộp thoại Lưu JSON & Giao diện Tối giản:**
   - **Cải thiện vùng nhận diện thao tác (Hitbox):** Mở rộng vùng click/kéo (`68×36`) phủ trọn thân và khe hở của **Tụ điện (`C`)**, **Cuộn dây (`L`)**, **Điện trở (`R`)**, **Tổng trở (`Z`)**, **1-Cửa (`ONE_PORT`)** và toàn bộ `17 + GND` phần tử; bổ sung khung hover trực quan, khung chọn ôm sát phần tử, tăng độ nhạy chân kết nối (`r = 10`) và dây dẫn (`strokeWidth = 14`), hỗ trợ nhấp đúp hoàn tất đoạn dây đang vẽ.
   - **Hộp thoại lưu tệp khi xuất JSON (`Xuất JSON` / `Ctrl + S`):** Mở hộp thoại lưu tệp gốc của hệ điều hành (`showSaveFilePicker` trên trình duyệt hỗ trợ và Win32 `GetSaveFileNameW` trên bản Desktop `.exe`) cho phép tùy chỉnh tên tệp và chọn thư mục lưu trữ trước khi lưu; tự động mở hộp thoại đặt tên tệp dự phòng trên Firefox, Safari hoặc khi mở offline qua `file://`.
@@ -92,7 +95,7 @@ Mở trình duyệt tại `http://localhost:3000/`.
 | :--- | :--- |
 | `npm run dev` | Chạy máy chủ phát triển Vite tại cổng `3000` |
 | `npm run lint` | Kiểm tra kiểu tĩnh TypeScript (`tsc --noEmit`) |
-| `npm test` | Chạy 43 bài kiểm thử tự động bộ giải MNA & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
+| `npm test` | Chạy 45 bài kiểm thử tự động bộ giải MNA, bố cục nhãn & stress test (`mna.test.ts`, `solver.test.ts`, `stress.test.ts`) |
 | `npm run build` | Build bản web tối ưu vào `dist/` |
 | `npm run preview` | Xem trước bản build `dist/` qua Vite Preview |
 | `npm run build:portable` | Đóng gói bản HTML đơn tệp chạy offline (`dist-portable/index.html`) |
@@ -114,8 +117,9 @@ Mở trình duyệt tại `http://localhost:3000/`.
 ├── src/
 │   ├── engine/                    # Bộ giải toán học & netlist MNA
 │   │   ├── complex.ts             # Đại số số phức
-│   │   ├── pins.ts                # Tọa độ chân linh kiện theo góc xoay
-│   │   ├── netlist.ts             # Hợp nhất dây trực giao thành nút điện thế & kiểm tra topology
+│   │   ├── pins.ts                # Tọa độ chân linh kiện theo góc xoay (hỗ trợ 45° / góc bất kỳ)
+│   │   ├── labelLayout.ts         # Động cơ chống đè nhãn nút, dòng nhánh & chấm cực tính hỗ cảm
+│   │   ├── netlist.ts             # Hợp nhất dây dẫn & kiểm tra topology
 │   │   ├── mna.ts                 # Bộ giải DC, DC_SS, AC đa tần, Transient, Thévenin & 2-Port
 │   │   ├── mna.test.ts            # Unit test cơ bản
 │   │   └── __tests__/             # solver.test.ts & stress.test.ts
